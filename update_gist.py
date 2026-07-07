@@ -61,6 +61,7 @@ def update_gist(content: str) -> None:
 def main() -> None:
     content = build_gist_content(fetch_stats(os.environ["SUPA_DSN"]))
     if "--dry-run" in sys.argv:
+        sys.stdout.reconfigure(encoding="utf-8")  # Windows 콘솔(cp949) 이모지 출력 대응
         print(content)
         return
     update_gist(content)
