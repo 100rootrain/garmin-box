@@ -1,0 +1,2 @@
+garmindb
+psycopg[binary]
