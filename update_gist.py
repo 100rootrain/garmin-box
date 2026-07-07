@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Supabase 통계 조회 -> GitHub gist 갱신 (최근 30일, 러닝/걷기/자전거 거리 막대)."""
+"""Supabase 통계 조회 -> GitHub gist 갱신.
+
+- 상단: 최근 30일 러닝/걷기/자전거 거리 막대
+- 하단: 올해 러닝 누적 vs 작년 총합 도달률
+"""
 import json
 import os
 import sys
@@ -23,27 +27,52 @@ STATS_SQL = """
     group by sport
 """
 
+YEAR_SQL = """
+    select
+        cast(date_part('year', now()) as int),
+        cast(date_part('year', now()) as int) - 1,
+        coalesce(sum(distance_km) filter (
+            where date_part('year', start_time) = date_part('year', now())), 0),
+        coalesce(sum(distance_km) filter (
+            where date_part('year', start_time) = date_part('year', now()) - 1), 0)
+    from garmin_activity
+    where sport = 'running'
+"""
+
 
 def fetch_stats(dsn: str) -> dict:
-    rows = {}
     with psycopg.connect(dsn) as pg, pg.cursor() as cur:
+        rows = {}
         for sport, cnt, km in cur.execute(STATS_SQL).fetchall():
             rows[sport] = (int(cnt), float(km))
-    return {key: rows.get(key, (0, 0.0)) for key, _, _ in SPORTS}
+        sports = {key: rows.get(key, (0, 0.0)) for key, _, _ in SPORTS}
+        cy, py, ck, pk = cur.execute(YEAR_SQL).fetchone()
+    return {
+        "sports": sports,
+        "cur_year": int(cy), "prev_year": int(py),
+        "cur_km": float(ck), "prev_km": float(pk),
+    }
+
+
+def _bar(pct: float) -> str:
+    filled = max(0, min(BAR_LEN, round(pct / 100 * BAR_LEN)))
+    return "█" * filled + "░" * (BAR_LEN - filled)
 
 
 def build_gist_content(stats: dict) -> str:
-    total_km = sum(km for _, km in stats.values())
-    total_cnt = sum(cnt for cnt, _ in stats.values())
+    sports = stats["sports"]
+    total_km = sum(km for _, km in sports.values())
     lines = []
     for key, emoji, label in SPORTS:
-        cnt, km = stats[key]
+        _, km = sports[key]
         pct = (km / total_km * 100) if total_km else 0.0
-        filled = round(pct / 100 * BAR_LEN)
-        bar = "█" * filled + "░" * (BAR_LEN - filled)
-        lines.append(f"{emoji} {label:<9} {km:>5.1f} km  {bar} {pct:>5.1f}%")
+        lines.append(f"{emoji} {label:<9} {km:>5.1f} km  {_bar(pct)} {pct:>5.1f}%")
+
     lines.append("")
-    lines.append(f"📅 최근 30일 · 총 {total_km:.1f} km · {total_cnt}회")
+    cur_km, prev_km = stats["cur_km"], stats["prev_km"]
+    ypct = (cur_km / prev_km * 100) if prev_km else 0.0
+    lines.append(f"🎯 {stats['cur_year']} vs {stats['prev_year']}  {_bar(ypct)} {ypct:>5.1f}%")
+    lines.append(f"   {cur_km:.1f} / {prev_km:.1f} km")
     return "\n".join(lines)
 
 
