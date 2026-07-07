@@ -68,10 +68,11 @@ def build_gist_content(stats: dict) -> str:
         pct = (km / total_km * 100) if total_km else 0.0
         lines.append(f"{emoji} {label:<9} {km:>5.1f} km  {_bar(pct)} {pct:>5.1f}%")
 
-    lines.append("")
     cur_km, prev_km = stats["cur_km"], stats["prev_km"]
     ypct = (cur_km / prev_km * 100) if prev_km else 0.0
-    lines.append(f"🎯 {stats['cur_year']} vs {stats['prev_year']}  {_bar(ypct)} {ypct:>5.1f}%")
+    label = f"{stats['cur_year']} vs {stats['prev_year']}"
+    # 라벨 폭 20 = 종목줄의 "{label:<9} {km:>5.1f} km  " 폭과 동일 → 막대 시작 정렬
+    lines.append(f"🎯 {label:<20}{_bar(ypct)} {ypct:>5.1f}%")
     lines.append(f"   {cur_km:.1f} / {prev_km:.1f} km")
     return "\n".join(lines)
 
