@@ -37,7 +37,13 @@ Strava 2026-06 정책 변경으로 무료 API 차단됨).
 
        schtasks /Create /TN garmin-box /SC DAILY /ST 09:10 /TR "powershell -ExecutionPolicy Bypass -File C:\경로\garmin-box\run_garmin_batch.ps1"
 
-## 설치 (Linux 서버 — 클라우드 IP는 Garmin 429 주의)
+## 설치 (Linux 서버 / OCI — 클라우드 IP는 Garmin 429 주의)
+
+> **이 서버는 OCI(Oracle Cloud Infrastructure)다.** OCI 등 클라우드/데이터센터 IP는
+> Garmin Connect 로그인·`--download`에서 **429로 차단**된다. 따라서 OCI에서는
+> `run_garmin_batch.sh` 전체(다운로드 포함)를 돌리면 다운로드 단계에서 실패한다.
+> OCI는 **Garmin 접속이 필요 없는 뒷단(sync_supa → update_gist)만** 돌리거나,
+> gist 갱신 전용 스케줄러로만 쓸 것. Garmin 다운로드는 가정/사무실 IP의 Windows PC 담당.
 
     git clone https://github.com/100rootrain/garmin-box.git && cd garmin-box
     python3 -m venv .venv
@@ -47,8 +53,10 @@ Strava 2026-06 정책 변경으로 무료 API 차단됨).
    (예제: `.venv/lib/python*/site-packages/garmindb/GarminConnectConfig.json.example`)
 2. 시크릿: `cp .env.example ~/.garmin-box.env && chmod 600 ~/.garmin-box.env` 후 실값 입력
 3. Supabase에 `schema.sql` 실행 (최초 1회)
-4. 수동 실행: `./run_garmin_batch.sh`
-5. cron 등록: `10 3 * * * /home/USER/garmin-box/run_garmin_batch.sh >> /home/USER/garmin-box/garmin-batch.log 2>&1`
+4. 수동 실행 (뒷단만): `.venv/bin/python sync_supa.py && .venv/bin/python update_gist.py`
+   (Garmin 다운로드까지 포함한 `./run_garmin_batch.sh` 는 OCI IP에서 429로 실패)
+5. cron 등록 (gist 갱신 전용, 매일 03:10):
+   `10 3 * * * cd /home/USER/garmin-box && .venv/bin/python update_gist.py >> update_gist.log 2>&1`
 
 ## 개발
 
