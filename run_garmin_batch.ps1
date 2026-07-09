@@ -3,6 +3,10 @@
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
+# 실행 전체를 batch.log로 캡처 → 스케줄러에서 조용히 실패해도(예: gist 403) 흔적이 남는다.
+Start-Transcript -Path (Join-Path $PSScriptRoot 'batch.log') -Append | Out-Null
+try {
+
 # --- 시크릿 로드: KEY=VALUE, 첫 '=' 만 구분자 (SUPA_DSN 값 안의 '=' 보존) ---
 $envFile = Join-Path $HOME '.garmin-box.env'
 if (-not (Test-Path $envFile)) { throw "env file not found: $envFile" }
@@ -27,3 +31,7 @@ if ($LASTEXITCODE -ne 0) { throw "sync_supa failed ($LASTEXITCODE)" }
 if ($LASTEXITCODE -ne 0) { throw "update_gist failed ($LASTEXITCODE)" }
 
 Write-Host "done: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+}
+finally {
+    Stop-Transcript | Out-Null
+}
