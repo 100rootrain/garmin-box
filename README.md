@@ -33,9 +33,12 @@ Strava 2026-06 정책 변경으로 무료 API 차단됨).
 
 3. Supabase에 `schema.sql` 실행 (최초 1회)
 4. 수동 실행: `powershell -ExecutionPolicy Bypass -File .\run_garmin_batch.ps1`
-5. 작업 스케줄러 등록 (매일 09:10 예시):
+5. 작업 스케줄러 등록 (매일 09:10 예시). **창이 안 뜨게** `run_garmin_batch_hidden.vbs`
+   런처로 호출한다(직접 .ps1을 걸면 실행 때마다 PowerShell 창이 뜬다):
 
-       schtasks /Create /TN garmin-box /SC DAILY /ST 09:10 /TR "powershell -ExecutionPolicy Bypass -File C:\경로\garmin-box\run_garmin_batch.ps1"
+       schtasks /Create /TN garmin-box /SC DAILY /ST 09:10 /TR "wscript.exe \"C:\경로\garmin-box\run_garmin_batch_hidden.vbs\""
+
+   출력은 `batch.log`에 남으므로 창을 숨겨도 실패 원인을 추적할 수 있다.
 
 ## 설치 (Linux 서버 / OCI — 클라우드 IP는 Garmin 429 주의)
 
