@@ -78,11 +78,14 @@ powershell -ExecutionPolicy Bypass -File .\run_garmin_batch.ps1
 
 ### Linux / OCI
 
-OCI 같은 클라우드 서버에서는 Garmin 다운로드를 실행하지 마세요. 클라우드 IP가 429로 차단될 수 있습니다. Windows PC에서 다운로드한 뒤, 서버에서는 필요할 때 `sync_supa.py`와 `update_gist.py`만 실행하거나 gist 갱신만 예약합니다.
+OCI 같은 클라우드 서버에서는 Garmin 다운로드를 실행하지 마세요. 클라우드 IP가 429로 차단될 수 있습니다. Windows PC에서 다운로드한 뒤, `garmin_activities.db`를 서버의 `$HOME/HealthData/DBs/garmin_activities.db`로 복사합니다. 다른 위치를 쓰면 서버의 `$HOME/.garmin-box.env`에 `GARMIN_SQLITE=/실제/경로/garmin_activities.db`를 추가하세요. 서버의 같은 파일에는 `SUPA_DSN`, `GITHUB_TOKEN`, `GIST_ID`도 설정합니다.
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+set -a
+source "$HOME/.garmin-box.env"
+set +a
 .venv/bin/python sync_supa.py
 .venv/bin/python update_gist.py
 ```
