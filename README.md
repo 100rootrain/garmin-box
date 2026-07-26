@@ -1,5 +1,7 @@
 # garmin-box
 
+[![README: English](https://img.shields.io/badge/README-English-blue)](README.en.md)
+
 Garmin Connect 활동 통계를 GitHub 프로필 gist에 표시한다 (strava-box 대체 —
 Strava 2026-06 정책 변경으로 무료 API 차단됨).
 
