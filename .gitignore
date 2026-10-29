@@ -2,3 +2,7 @@
 __pycache__/
 *.log
 .env
+build/out/
+src/GarminBox/payload/
+bin/
+obj/

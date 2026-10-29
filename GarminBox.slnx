@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GarminBox.Tests/GarminBox.Tests.csproj" />
+    <Project Path="src/GarminBox/GarminBox.csproj" />
+  </Folder>
+</Solution>

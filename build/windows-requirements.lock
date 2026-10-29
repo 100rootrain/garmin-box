@@ -1,0 +1,27 @@
+# 배포 승인 목록. 검증 기록의 windows-runtime-requirements.txt에서 시작했다. 바꾸면 Windows 번들 검증을 다시 한다.
+cached-property==2.0.1
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+colorama==0.4.6
+curl_cffi==0.17.0
+fitfile==1.2.0
+garminconnect==0.3.11
+GarminDb==3.9.0
+greenlet==3.5.6
+idbutils==1.2.0
+idna==3.20
+psycopg==3.3.6
+psycopg-binary==3.3.6
+pycparser==3.12
+python-dateutil==2.9.0.post0
+requests==2.34.2
+six==1.17.0
+SQLAlchemy==2.0.52
+tcxfile==1.0.4
+tornado==6.6
+tqdm==4.67.1
+typing_extensions==4.16.0
+tzdata==2026.6
+ua-generator==2.1.7
+urllib3==2.8.0
