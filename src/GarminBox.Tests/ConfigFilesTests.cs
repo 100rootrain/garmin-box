@@ -124,6 +124,26 @@ public class ConfigFilesTests
     }
 
     [Fact]
+    public void ScheduleRetryNeedsSuccessAfterSave()
+    {
+        using var profile = new TempProfile();
+        Directory.CreateDirectory(Paths.InstallDir);
+        void Status(string result, int minutesAfterSave)
+        {
+            File.WriteAllText(Paths.Status, $$"""{"result":"{{result}}"}""");
+            File.SetLastWriteTimeUtc(Paths.Status, File.GetLastWriteTimeUtc(Paths.Settings).AddMinutes(minutesAfterSave));
+        }
+        ConfigFiles.SaveAll(new AppSettings(), "{}", "SUPA_DSN=x\n", NoDb);
+        Assert.False(ConfigFiles.SyncedSinceSaved());   // 저장만 끝났다
+        Status("failed", 1);
+        Assert.False(ConfigFiles.SyncedSinceSaved());   // 첫 동기화 실패·취소
+        Status("success", 1);
+        Assert.True(ConfigFiles.SyncedSinceSaved());
+        Status("success", -1);
+        Assert.False(ConfigFiles.SyncedSinceSaved());   // 이전 설정의 성공. 다시 저장한 뒤 실행이 상태를 남기지 못했다
+    }
+
+    [Fact]
     public void AccountChangeIsRefusedAtSaveWhenDbAppearedAfterCheck()
     {
         using var profile = new TempProfile();

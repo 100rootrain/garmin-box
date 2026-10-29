@@ -199,13 +199,13 @@ sealed class MainForm : Form
         var settings = ConfigFiles.LoadSettings();
         var status = ConfigFiles.ReadStatus();
         var lines = new List<string>();
+        // 첫 동기화 실패·취소 뒤에는 열지 않는다: 그때는 설정 시작이나 지금 동기화가 먼저다
+        bool retrySchedule = ConfigFiles.SyncedSinceSaved() && !ScheduleRegistered();
+        scheduleButton.Visible = retrySchedule;
         if (!settings.ConfigComplete)
             lines.Add("설정이 완료되지 않았습니다. 정보를 입력하고 연결 확인 → 설정 시작을 누르세요.");
-        else if (!ScheduleRegistered())
-        {
+        else if (retrySchedule)
             lines.Add("매일 자동 실행이 등록되어 있지 않습니다. '예약 다시 등록'을 누르세요.");
-            scheduleButton.Visible = true;
-        }
         if (status is null)
             lines.Add("최근 동기화 결과: 없음");
         else
@@ -375,7 +375,6 @@ sealed class MainForm : Form
         try
         {
             var outcome = Scheduler.Register(Paths.Exe, at);
-            scheduleButton.Visible = !outcome.Registered;
             if (outcome.Registered)
                 ShowSuccess($"설정 완료 · {synced} · 다음 실행 {outcome.NextRun:yyyy-MM-dd HH:mm} (로그인되어 있을 때만)");
             else
@@ -383,10 +382,9 @@ sealed class MainForm : Form
         }
         catch (Exception e)
         {
-            scheduleButton.Visible = true;
             ShowFailure($"동기화 성공 / 자동 실행 설정 실패: {e.Message}");
         }
-        ShowRecent();
+        ShowRecent();   // 재시도 버튼 표시도 여기서 정한다
         UpdateButtons();
     }
 

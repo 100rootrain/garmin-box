@@ -124,6 +124,10 @@ static class ConfigFiles
         catch (Exception e) when (e is IOException or JsonException) { return null; }
     }
 
+    /// ConfigComplete는 설정 저장 완료일 뿐이다. 저장 뒤의 실행(setup·sync)이 성공으로 상태를 남겨야 현재 설정으로 동기화된 것이다.
+    public static bool SyncedSinceSaved() => LoadSettings().ConfigComplete && (string?)ReadStatus()?["result"] == "success"
+        && File.GetLastWriteTimeUtc(Paths.Status) > File.GetLastWriteTimeUtc(Paths.Settings);
+
     /// Python이 상태를 쓰지 못한 경우(시간 초과로 종료, 시작 실패)에만 쓴다.
     public static void WriteFailureStatus(string mode, string message) => AtomicWrite(Paths.Status, new JsonObject
     {
