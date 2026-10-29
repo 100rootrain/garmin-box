@@ -1,5 +1,8 @@
-' garmin-box 배치를 창 없이 실행하는 런처. 출력은 batch.log에 남는다.
-Set fso = CreateObject("Scripting.FileSystemObject")
-scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
-CreateObject("WScript.Shell").Run _
-  "powershell -ExecutionPolicy Bypass -File """ & scriptDir & "\run_garmin_batch.ps1""", 0, False
+' 설치된 garmin-box EXE의 --sync를 창 없이 실행하는 수동 런처. 결과는 EXE가 보여 준다.
+Set shell = CreateObject("WScript.Shell")
+exe = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\garmin-box\GarminBox.exe"
+If CreateObject("Scripting.FileSystemObject").FileExists(exe) Then
+  shell.Run """" & exe & """ --sync", 0, False
+Else
+  MsgBox "garmin-box is not installed. Run GarminBox.exe from the release first.", 48, "garmin-box"
+End If
