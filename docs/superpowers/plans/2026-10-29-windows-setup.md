@@ -18,7 +18,8 @@
 
 - `garmindb_cli.py`는 로그인 실패 시 `sys.exit()`로 **종료 코드 0**을 낸다. 활동 목록·상세·FIT 오류도 로그만 남긴다. → 0이 아닌 종료 코드는 즉시 실패로, 0이어도 아래 로그인 표식과 SQLite ID 대조를 모두 통과해야 완료로 본다.
 - `Download.login()`은 로그인에 성공할 때마다 프로필 폴더(`gc_config.get_fit_files_dir()`)의 `user-settings.json`을 덮어쓴다. → CLI 실행 전후로 이 파일의 수정 시각이 바뀌지 않았으면 0으로 끝난 로그인 실패로 본다.
-- 로그인 뒤의 목록·요약 조회 실패도 종료 코드 0이다(`__get_activity_summaries`는 `GarminConnectAuthError`를 로그만 남기고 빈 목록으로 끝난다). `Download.get_activities()`는 SQLite가 아니라 `activity_<id>.json`이 있는지로 다시 받을지 정한다(`--overwrite` 없을 때). → 원격 ID마다 **SQLite 행과 요약 JSON이 모두 있어야** 수집된 것으로 본다. 그러면 목록 조회가 실패한 실행이 통과하는 경우는 정상 실행도 아무것도 다시 받지 않는 경우뿐이다. JSON만 없으면(원본 정리·DB만 이전) 전체 수집으로 보충하고, 그래도 없으면 `incomplete`. 상세 JSON·FIT는 정상 실행에서도 요약 JSON이 있으면 다시 받지 않으므로 선택 항목으로 둔다.
+- 로그인 뒤의 목록·요약 조회 실패도 종료 코드 0이다(`__get_activity_summaries`는 `GarminConnectAuthError`를 로그만 남기고 빈 목록으로 끝난다). `Download.get_activities()`는 SQLite가 아니라 `activity_<id>.json`이 있는지로 다시 받을지 정한다(`--overwrite` 없을 때). → 원격 ID마다 **SQLite 행과 요약 JSON이 모두 있어야** 수집된 것으로 본다. 그러면 목록 조회가 실패한 실행이 통과하는 경우는 정상 실행도 아무것도 다시 받지 않는 경우뿐이다. JSON만 없으면(원본 정리·DB만 이전) 전체 수집으로 보충하고, 그래도 없으면 `incomplete`. 상세 JSON·FIT는 정상 실행에서도 요약 JSON이 있으면 다시 받지 않으므로 선택 항목으로 둔다. 이 JSON 조건은 원격 ID의 완료 판정에만 쓰고, 여분 경고·빈 DB·완료 건수는 `sync_supa.py`가 올리는 SQLite 전체 행으로 센다.
+- JSON import 실패(파싱 오류·DB 반영 예외 모두)는 `idbutils.JsonFileProcessor._process_files`가 `Failed to parse <파일>`로 cwd의 `garmindb.log`에만 남기고 계속한다. → `run_garmindb`가 이 로그에서 요약 파일(`activity_<id>.json`) 실패를 찾아 그 파일을 지운다. 그러면 위 완료 판정에서 누락돼 다시 받고, 계속 실패하면 `incomplete`. `--latest` import는 하루 안에 바뀐 파일만 읽으므로, 그보다 오래된 손상 파일은 이번 실행에서 import되지 않는다(정상 최근 수집도 같은 결과).
 - `GarminConnectAuthAdapter(gc_config, garmin_factory=None, mfa_prompt=None)`는 토큰 파일(`gc_config.get_token_store_file()` = `~/.GarminDb/garmin_tokens.json`)로 먼저 로그인하고, 실패하면 자격증명으로 폴백하며, garminconnect 예외를 `GarminConnectAuthError`로 감싼다. 어댑터는 `gc_config`의 `get_user/get_password/get_token_store_file/get_garmin_base_domain`만 쓴다.
 - garminconnect 0.3.11 `Garmin.login(path)`는 path가 없으면 자격증명 로그인 후 그 path에 토큰을 쓰고(실패는 무시), API가 캐시 토큰을 거부하면 자격증명으로 다시 로그인한다.
 - 다운로드 개수는 설정의 `data.download_latest_activities`(`--latest`)와 `data.download_all_activities`(없으면)로 정해진다. 활동 목록 URL은 `Download.garmin_connect_activity_search_url`.
@@ -446,13 +447,14 @@ class ChildProcessTests(unittest.TestCase):
 - [ ] **3단계: 구현**
 
 ```python
-def run_child(args, env, log, timeout, on_line=None):
+def run_child(args, env, log, timeout, on_line=None, cwd=None):
     """번들 Python으로 절대 경로 스크립트를 `-I -X utf8` 하위 프로세스로 실행한다 (`-I`라 import로는 못 부른다).
 
-    stdin은 닫아 예기치 않은 기본 MFA 프롬프트에서도 멈추지 않고, cwd는 임시 폴더라 원문 garmindb.log가 남지 않는다.
+    stdin은 닫아 예기치 않은 기본 MFA 프롬프트에서도 멈추지 않고, cwd는 임시 폴더라 원문 garmindb.log가 남지 않는다
+    (run_garmindb는 로그를 읽으려고 자기 임시 폴더를 넘긴다).
     """
-    with tempfile.TemporaryDirectory(prefix="garmin-box-", ignore_cleanup_errors=True) as cwd:
-        proc = subprocess.Popen([sys.executable, "-I", "-X", "utf8", *map(str, args)], cwd=cwd, env=env,
+    with tempfile.TemporaryDirectory(prefix="garmin-box-", ignore_cleanup_errors=True) as temp:
+        proc = subprocess.Popen([sys.executable, "-I", "-X", "utf8", *map(str, args)], cwd=cwd or temp, env=env,
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, encoding="utf-8", errors="replace")
         timed_out = threading.Event()
@@ -733,11 +735,11 @@ class GarminDbRunTests(unittest.TestCase):
         marker.write_text("{}", encoding="utf-8")
         os.utime(marker, (0, 0))  # 이전 실행이 남긴 로그인 표식
 
-        def run(args, env, log, timeout, on_line=None):
+        def run(args, env, log, timeout, on_line=None, cwd=None):
             if logged_in:
                 marker.write_text("{}", encoding="utf-8")  # Download.login() 성공
             return code
-        return lambda latest: run_batch.run_garmindb(["garmindb_cli.py"], {}, print, 60, marker, run)
+        return lambda latest: run_batch.run_garmindb(["garmindb_cli.py"], {}, print, 60, marker, Path(tmp), run)
 
     def test_failed_cli_blocks_even_when_ids_are_complete(self):
         for code, logged_in in ((42, True), (0, False)):  # 비정상 종료 / 0으로 끝난 로그인 실패
@@ -749,6 +751,45 @@ class GarminDbRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
             local = run_batch.collect({"1"}, False, self.run_cli(tmp, 0, True), lambda: {"1"})
         self.assertEqual(local, {"1"})
+
+    def test_summary_import_failure_is_redownloaded_or_blocks(self):
+        """SQLite에 유효한 이전 행이 있어도 요약 import가 실패하면 그 요약을 다시 받고, 계속 실패하면 업로드 전에 멈춘다."""
+        for fixed_on_full_run in (True, False):
+            with self.subTest(fixed_on_full_run=fixed_on_full_run), tempfile.TemporaryDirectory() as tmp, \
+                    redirect_stdout(io.StringIO()):
+                activities, marker = Path(tmp), Path(tmp) / "user-settings.json"
+                summary = activities / "activity_1.json"
+                summary.write_text("{", encoding="utf-8")                     # 강제 종료로 잘린 요약
+                (activities / "activity_details_1.json").write_text("{", encoding="utf-8")
+                calls = []
+
+                def run(args, env, log, timeout, on_line=None, cwd=None):
+                    calls.append("--latest" in args)
+                    marker.write_text("{}", encoding="utf-8")
+                    redownloaded = not summary.exists()
+                    if redownloaded:                                          # Download: 파일이 없을 때만 다시 받는다
+                        summary.write_text("{}" if fixed_on_full_run else "{", encoding="utf-8")
+                    if summary.read_text(encoding="utf-8") == "{":           # JsonFileProcessor: 로그만 남기고 계속
+                        Path(cwd, "garmindb.log").write_text(
+                            f"ERROR:root:Failed to parse {activities}/activity_1.json: Traceback (most recent call last):\n"
+                            f"ERROR:root:Failed to parse {activities}/activity_details_1.json: Traceback\n", encoding="utf-8")
+                    return 0
+
+                def run_cli(latest):
+                    run_batch.run_garmindb(["garmindb_cli.py", *(["--latest"] if latest else [])], {}, print, 60,
+                                           marker, activities, run)
+
+                read_local = lambda: {"1"}                                    # 이전 실행의 유효한 행
+                with_summary = lambda ids: run_batch.with_summary(ids, activities)
+                if fixed_on_full_run:
+                    self.assertEqual(run_batch.collect({"1"}, False, run_cli, read_local, with_summary), {"1"})
+                    self.assertEqual(summary.read_text(encoding="utf-8"), "{}")
+                else:
+                    with self.assertRaises(Failure) as caught:
+                        run_batch.collect({"1"}, False, run_cli, read_local, with_summary)
+                    self.assertEqual(caught.exception.kind, "incomplete")
+                self.assertEqual(calls, [True, False])                          # 최근 수집 → 전체 수집으로 다시 받기
+                self.assertTrue((activities / "activity_details_1.json").exists())   # 상세 실패는 선택 항목
 
 
 class UploadTests(unittest.TestCase):
@@ -791,22 +832,37 @@ class SchemaTests(unittest.TestCase):
 
 
 class LocalIdsTests(unittest.TestCase):
-    def test_row_without_summary_json_is_missing_when_list_fails(self):
-        """SQLite ID는 완전하지만 요약 JSON이 없으면 정상 조회는 다시 받아 갱신한다 → 목록 실패 실행을 통과시키지 않는다."""
+    """요약 JSON 조건은 원격 ID의 수집 완료 판정에만 쓰고, 여분·건수는 sync_supa가 올리는 SQLite 전체 행으로 센다."""
+
+    def setUp(self):
         import sqlite3
         from contextlib import closing
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
-            db, activities = Path(tmp) / "garmin_activities.db", Path(tmp)
-            with closing(sqlite3.connect(db)) as lite:
-                lite.execute("create table activities (activity_id, start_time, name)")
-                lite.executemany("insert into activities values (?, '2026-10-29 09:00:00', 'old_name')", [("1",), ("2",)])
-                lite.commit()
-            (activities / "activity_1.json").write_text("{}", encoding="utf-8")
-            self.assertEqual(run_batch.local_ids(db, activities), {"1"})
-            with redirect_stdout(io.StringIO()), self.assertRaises(Failure) as caught:
-                # 목록 조회가 실패해 CLI가 아무것도 받지 않았다 (종료 코드 0, 로그인 표식은 갱신)
-                run_batch.collect({"1", "2"}, False, lambda latest: None, lambda: run_batch.local_ids(db, activities))
-            self.assertEqual(caught.exception.kind, "incomplete")
+        run_batch.WARNINGS.clear()
+        self.activities = Path(self.enterContext(tempfile.TemporaryDirectory(ignore_cleanup_errors=True)))
+        self.db = self.activities / "garmin_activities.db"
+        with closing(sqlite3.connect(self.db)) as lite:
+            lite.execute("create table activities (activity_id, start_time, name)")
+            lite.executemany("insert into activities values (?, '2026-10-29 09:00:00', 'old_name')", [("1",), ("2",)])
+            lite.commit()
+        (self.activities / "activity_1.json").write_text("{}", encoding="utf-8")   # 2는 요약 JSON 없음
+
+    def collect(self, remote):
+        with redirect_stdout(io.StringIO()):
+            # 목록 조회가 실패해 CLI가 아무것도 받지 않았다 (종료 코드 0, 로그인 표식은 갱신)
+            return run_batch.collect(remote, False, lambda latest: None, lambda: run_batch.local_ids(self.db),
+                                     lambda ids: run_batch.with_summary(ids, self.activities))
+
+    def test_row_without_summary_json_is_missing_when_list_fails(self):
+        """SQLite ID는 완전하지만 요약 JSON이 없으면 정상 조회는 다시 받아 갱신한다 → 목록 실패 실행을 통과시키지 않는다."""
+        self.assertEqual(run_batch.with_summary(run_batch.local_ids(self.db), self.activities), {"1"})
+        with self.assertRaises(Failure) as caught:
+            self.collect({"1", "2"})
+        self.assertEqual(caught.exception.kind, "incomplete")
+
+    def test_old_row_without_json_still_counts_as_uploaded_extra(self):
+        """원격 0 / SQLite 2건(하나는 JSON 없음): sync_supa는 둘 다 올리므로 0건이 아니라 2건과 여분 경고."""
+        self.assertEqual(self.collect(set()), {"1", "2"})
+        self.assertEqual(len(run_batch.WARNINGS), 1)
 
 
 class SupabaseOnlyTests(unittest.TestCase):
@@ -892,14 +948,18 @@ def activities_db(config):
     return Path(config.get_db_dir()) / "garmin_activities.db"
 
 
-def local_ids(db_path, activities_dir):
-    """sync_supa.py의 업로드 대상과 같은 조건(start_time is not null)이면서 요약 JSON도 있는 ID, 문자열로.
-
-    GarminDB는 SQLite가 아니라 activity_<id>.json이 있는지로 다시 받을지 정한다. 둘 다 있으면 목록 조회가 실패한
-    실행도 정상 실행과 같은 결과다. JSON이 없으면(원본 정리·DB만 이전) 정상 조회가 다시 받아 갱신하므로 누락으로 본다.
-    """
+def local_ids(db_path):
+    """sync_supa.py의 업로드 대상과 같은 조건(start_time is not null), ID는 문자열로."""
     with closing(sqlite3.connect(db_path)) as db:
-        ids = {str(row[0]) for row in db.execute("select activity_id from activities where start_time is not null")}
+        return {str(row[0]) for row in db.execute("select activity_id from activities where start_time is not null")}
+
+
+def with_summary(ids, activities_dir):
+    """요약 JSON(activity_<id>.json)도 있는 ID. 원격 ID의 수집 완료 판정에만 쓴다(업로드·건수는 SQLite 전체 행).
+
+    GarminDB는 SQLite가 아니라 이 파일이 있는지로 다시 받을지 정한다. 둘 다 있으면 목록 조회가 실패한 실행도
+    정상 실행과 같은 결과다. 파일이 없으면(원본 정리·DB만 이전·import 실패로 지움) 정상 조회가 다시 받으므로 누락이다.
+    """
     return {i for i in ids if (activities_dir / f"activity_{i}.json").is_file()}
 
 
@@ -914,21 +974,22 @@ def ensure_download_all(config_file, count):
     os.replace(temp, config_file)
 
 
-def collect(remote, full_first, run_cli, read_local):
-    """CLI 다운로드·import 뒤 원격 ID가 모두 수집돼야(local_ids: SQLite 행 + 요약 JSON) 완료다 (건수가 같아도 ID가 빠지면 실패).
+def collect(remote, full_first, run_cli, read_local, collected=lambda ids: ids):
+    """CLI 다운로드·import 뒤 원격 ID가 모두 수집돼야(collected: SQLite 행 + 요약 JSON) 완료다 (건수가 같아도 ID가 빠지면 실패).
 
     목록·요약 조회 실패는 GarminDB가 로그만 남기므로 ID 누락으로 판별한다. 원본 FIT·상세 JSON만 없는 활동은
-    요약이 있어 통과한다(정상 실행에서도 GarminDB가 다시 받지 않는 선택 항목).
+    요약이 있어 통과한다(정상 실행에서도 GarminDB가 다시 받지 않는 선택 항목). 돌려주는 값과 여분 경고는
+    sync_supa.py가 실제로 올리는 SQLite 전체 행(read_local) 기준이다.
     """
     missing = None
     if not full_first:
         run_cli(latest=True)
-        missing = remote - read_local()
+        missing = remote - collected(read_local())
         if missing:
             warn(f"최근 기록 밖에서 빠진 {len(missing)}건을 전체 수집으로 보충합니다.")
     if full_first or missing:
         run_cli(latest=False)
-        if still := remote - read_local():
+        if still := remote - collected(read_local()):
             raise Failure("incomplete", f"Garmin 기록 {len(still)}건을 가져오지 못해 Supabase·gist를 갱신하지 않았습니다. 다시 동기화하세요.")
     local = read_local()
     if extra := local - remote:
@@ -936,14 +997,29 @@ def collect(remote, full_first, run_cli, read_local):
     return local
 
 
-def run_garmindb(args, env, log, timeout, login_marker, run=run_child, on_line=None):
+SUMMARY_IMPORT_FAILED = re.compile(r"Failed to parse .*?[\\/]activity_(\d+)\.json:")
+
+
+def run_garmindb(args, env, log, timeout, login_marker, activities_dir, run=run_child, on_line=None):
     """garmindb_cli를 한 번 실행한다. 0이 아닌 종료는 실패이고, 0이어도 이번 실행에서 로그인 표식이 갱신되지 않았으면 실패다.
 
     GarminDB 3.9.0은 로그인 실패를 sys.exit()(종료 코드 0)로 끝내고, 성공할 때마다 user-settings.json을 덮어쓴다.
     시작 시각과 비교하지 않는다: NTFS 수정 시각은 time.time()보다 거칠어(약 15ms) 방금 쓴 파일이 더 이르게 보일 수 있다.
+
+    JSON import 실패(파싱·DB 반영 예외 모두)는 JsonFileProcessor가 cwd의 garmindb.log에 "Failed to parse <파일>"로만
+    남긴다. 요약 파일이 실패했으면 그 파일을 지워 collect가 누락으로 보고 다시 받게 한다(잘린 파일은 있다고 건너뛰어
+    재시도로도 복구되지 않는다). 다시 받아도 실패하면 incomplete로 업로드 전에 멈춘다. 상세 JSON·FIT 실패는 선택 항목이다.
+    원문 로그는 메모리에서만 읽고 남기지 않는다.
     """
     before = login_marker.stat().st_mtime_ns if login_marker.is_file() else None
-    code = run(args, env, log, timeout, on_line)
+    with tempfile.TemporaryDirectory(prefix="garmin-box-", ignore_cleanup_errors=True) as cwd:
+        code = run(args, env, log, timeout, on_line, cwd=cwd)
+        garmindb_log = Path(cwd) / "garmindb.log"
+        text = garmindb_log.read_text(encoding="utf-8", errors="replace") if garmindb_log.is_file() else ""
+    if failed := set(SUMMARY_IMPORT_FAILED.findall(text)):
+        for activity_id in failed:
+            (activities_dir / f"activity_{activity_id}.json").unlink(missing_ok=True)
+        emit("progress", stage="import", message=f"가져오지 못한 활동 요약 {len(failed)}건은 다시 받습니다.")
     if code != 0:
         raise Failure("garmin", f"GarminDB 수집이 실패했습니다(종료 코드 {code}). 로그를 확인하세요.")
     if not login_marker.is_file() or login_marker.stat().st_mtime_ns == before:
@@ -990,16 +1066,17 @@ def sync(mode, values, prompt_allowed, log, factory=None):
     env = child_env(values, GARMIN_SQLITE=str(db_path))
     cli = Path(sys.executable).parent / "Scripts" / "garmindb_cli.py"
     login_marker = Path(config.get_fit_files_dir()) / "user-settings.json"
+    activities_dir = Path(config.get_activities_dir())
 
     def run_cli(latest):
         stage = "latest" if latest else "all"
         if not latest:
             ensure_download_all(GARMIN_CONFIG, max(LIST_LIMIT_FLOOR, total))
         run_garmindb([cli, "--activities", "--download", "--import", "--analyze", *(["--latest"] if latest else [])],
-                     env, log, CLI_TIMEOUT[stage], login_marker,
+                     env, log, CLI_TIMEOUT[stage], login_marker, activities_dir,
                      on_line=lambda line: emit("progress", stage=stage, message=line))
 
-    local = collect(remote, mode == "setup", run_cli, lambda: local_ids(db_path, Path(config.get_activities_dir())))
+    local = collect(remote, mode == "setup", run_cli, lambda: local_ids(db_path), lambda ids: with_summary(ids, activities_dir))
     try:
         changed = adapter.client.count_activities() != total
     except Exception:
@@ -1645,6 +1722,28 @@ public class ConfigFilesTests
         ConfigFiles.SaveAll(new AppSettings(), """{"credentials":{"user":"B@x.com"}}""", "SUPA_DSN=x\n", NoDb);
         Assert.Equal("B", File.ReadAllText(Paths.GarminToken));   // 같은 계정이면 기존 토큰을 그대로 쓴다
     }
+
+    [Fact]
+    public void RetryAfterPartialAccountChangeDoesNotReuseOldToken()
+    {
+        using var profile = new TempProfile();
+        Directory.CreateDirectory(Paths.InstallDir);
+        Directory.CreateDirectory(Paths.GarminDbDir);
+        File.WriteAllText(Paths.GarminConfig, """{"credentials":{"user":"a@x.com"}}""");
+        File.WriteAllText(Paths.GarminToken, "A");
+        File.WriteAllText(Paths.CheckToken, "B");
+        Directory.CreateDirectory(Paths.EnvFile);   // B 설정을 쓴 뒤 .env 저장 실패
+        string b = """{"credentials":{"user":"b@x.com"}}""";
+        Assert.ThrowsAny<Exception>(() => ConfigFiles.SaveAll(new AppSettings(), b, "SUPA_DSN=x\n", NoDb));
+        Assert.Contains("b@x.com", File.ReadAllText(Paths.GarminConfig));   // 디스크에는 이미 B
+        Assert.False(File.Exists(Paths.GarminToken));                       // A 토큰은 B를 쓰기 전에 지웠다
+        File.Delete(Paths.CheckToken);              // 창을 닫아 확인 결과를 버렸다
+        Directory.Delete(Paths.EnvFile);
+        // 다시 열면 저장된 이메일 B·빈 비밀번호로 재확인하고(캐시 토큰이 없어 B 자격증명 로그인) 저장을 재시도한다
+        ConfigFiles.SaveAll(new AppSettings(), b, "SUPA_DSN=x\n", NoDb);
+        Assert.True(ConfigFiles.LoadSettings().ConfigComplete);
+        Assert.False(File.Exists(Paths.GarminToken));   // 다음 로그인도 A 토큰이 아니라 B 자격증명
+    }
 }
 ```
 
@@ -1806,6 +1905,10 @@ static class ConfigFiles
         bool sameAccount = string.Equals(saved, UserOf(garminJson), StringComparison.OrdinalIgnoreCase);
         if (!sameAccount && !string.IsNullOrEmpty(saved) && File.Exists(dbPath))
             throw new InvalidOperationException("이 PC에는 다른 Garmin 계정의 운동 DB가 있어 계정을 바꿀 수 없습니다.");
+        // 계정을 바꾸면 새 이메일을 디스크에 쓰기 전에 이전 계정 토큰부터 지운다. 중간에 실패한 뒤 재시도할 때는 저장된
+        // 이메일이 이미 새 계정이라 같은 계정으로 보이므로, 그때 남은 토큰을 새 계정 것으로 오인하지 않게 한다.
+        // 확인 토큰이 없으면(로그인은 됐지만 토큰 저장 실패) 다음 동기화는 저장한 새 자격증명으로 로그인한다.
+        if (!sameAccount) File.Delete(Paths.GarminToken);
         SaveSettings(settings with { ConfigComplete = false });
         Directory.CreateDirectory(Paths.GarminDbDir);
         SecretAcl.ProtectTree(Paths.GarminDbDir);   // 기존 설정·토큰·백업의 과도한 권한도 여기서 정리
@@ -1813,9 +1916,6 @@ static class ConfigFiles
         AtomicWrite(Paths.EnvFile, envText);
         // 연결 확인에서 받은 토큰은 설정이 저장된 뒤에만 운영 토큰이 된다. 저장하지 않으면 기존 계정 토큰이 그대로다.
         if (File.Exists(Paths.CheckToken)) File.Move(Paths.CheckToken, Paths.GarminToken, overwrite: true);
-        // 계정을 바꿨는데 확인 토큰이 없으면(로그인은 됐지만 토큰 저장 실패) 이전 계정 토큰으로 다음 동기화가 로그인하지 않게
-        // 지운다. 다음 동기화는 저장한 새 자격증명으로 로그인한다.
-        else if (!sameAccount) File.Delete(Paths.GarminToken);
         SaveSettings(settings with { ConfigComplete = true });
     }
 
@@ -2777,7 +2877,9 @@ Get-FileHash (Join-Path $out 'publish\GarminBox.exe') -Algorithm SHA256
 | MFA 입력 대기 중 시간 초과·취소 시 반환 (2차 리뷰 반영) | 9, 12, 15 |
 | 로그인 뒤 목록 실패: 완료 조건을 SQLite 행 + 요약 JSON으로 (3차 리뷰 반영) | 5 |
 | 원격·로컬에 없는 Supabase 기록 경고와 완료 건수 반영 (3차 리뷰 반영) | 5 |
-| 계정 변경 저장 시 확인 토큰이 없으면 이전 계정 토큰 삭제 (3차 리뷰 반영) | 8 |
+| 계정 변경 저장 시 새 이메일을 쓰기 전에 이전 계정 토큰 삭제 (3·4차 리뷰 반영) | 8 |
+| JSON 조건은 완료 판정에만, 여분·건수는 SQLite 전체 행 (4차 리뷰 반영) | 5 |
+| 요약 import 실패를 garmindb.log에서 찾아 다시 받기, 계속 실패하면 차단 (4차 리뷰 반영) | 3, 5 |
 | 원격 삭제·원격 0건 여분 기록 경고 후 진행 | 5 |
 | SQL·변환 오류 시 롤백과 gist 차단 | 5 |
 | EXE 경유 작업의 mutex, abandoned 복구 | 7, 12, 15 |
