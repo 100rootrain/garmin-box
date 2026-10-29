@@ -18,7 +18,7 @@
 
 - `garmindb_cli.py`는 로그인 실패 시 `sys.exit()`로 **종료 코드 0**을 낸다. 활동 목록·상세·FIT 오류도 로그만 남긴다. → 0이 아닌 종료 코드는 즉시 실패로, 0이어도 아래 로그인 표식과 SQLite ID 대조를 모두 통과해야 완료로 본다.
 - `Download.login()`은 로그인에 성공할 때마다 프로필 폴더(`gc_config.get_fit_files_dir()`)의 `user-settings.json`을 덮어쓴다. → CLI 실행 전후로 이 파일의 수정 시각이 바뀌지 않았으면 0으로 끝난 로그인 실패로 본다.
-- 로그인 뒤의 목록·요약·import 실패(`__get_activity_summaries`는 `GarminConnectAuthError`를 로그만 남기고 빈 목록으로 끝난다)는 따로 판별하지 않는다. 새 활동이 있으면 원격 ID 대조에서 누락돼 `incomplete`로 막힌다. 새 활동이 없으면 `--overwrite` 없는 GarminDB는 이미 받은 활동을 다시 받지 않으므로, 업로드가 읽는 `activities` 테이블은 정상 실행과 같다. 업로드 대상을 `activities` 밖(상세·FIT 기반 표)으로 넓히면 이 전제를 다시 확인한다.
+- 로그인 뒤의 목록·요약 조회 실패도 종료 코드 0이다(`__get_activity_summaries`는 `GarminConnectAuthError`를 로그만 남기고 빈 목록으로 끝난다). `Download.get_activities()`는 SQLite가 아니라 `activity_<id>.json`이 있는지로 다시 받을지 정한다(`--overwrite` 없을 때). → 원격 ID마다 **SQLite 행과 요약 JSON이 모두 있어야** 수집된 것으로 본다. 그러면 목록 조회가 실패한 실행이 통과하는 경우는 정상 실행도 아무것도 다시 받지 않는 경우뿐이다. JSON만 없으면(원본 정리·DB만 이전) 전체 수집으로 보충하고, 그래도 없으면 `incomplete`. 상세 JSON·FIT는 정상 실행에서도 요약 JSON이 있으면 다시 받지 않으므로 선택 항목으로 둔다.
 - `GarminConnectAuthAdapter(gc_config, garmin_factory=None, mfa_prompt=None)`는 토큰 파일(`gc_config.get_token_store_file()` = `~/.GarminDb/garmin_tokens.json`)로 먼저 로그인하고, 실패하면 자격증명으로 폴백하며, garminconnect 예외를 `GarminConnectAuthError`로 감싼다. 어댑터는 `gc_config`의 `get_user/get_password/get_token_store_file/get_garmin_base_domain`만 쓴다.
 - garminconnect 0.3.11 `Garmin.login(path)`는 path가 없으면 자격증명 로그인 후 그 path에 토큰을 쓰고(실패는 무시), API가 캐시 토큰을 거부하면 자격증명으로 다시 로그인한다.
 - 다운로드 개수는 설정의 `data.download_latest_activities`(`--latest`)와 `data.download_all_activities`(없으면)로 정해진다. 활동 목록 URL은 `Download.garmin_connect_activity_search_url`.
@@ -790,6 +790,43 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(len(problems), 2)
 
 
+class LocalIdsTests(unittest.TestCase):
+    def test_row_without_summary_json_is_missing_when_list_fails(self):
+        """SQLite ID는 완전하지만 요약 JSON이 없으면 정상 조회는 다시 받아 갱신한다 → 목록 실패 실행을 통과시키지 않는다."""
+        import sqlite3
+        from contextlib import closing
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            db, activities = Path(tmp) / "garmin_activities.db", Path(tmp)
+            with closing(sqlite3.connect(db)) as lite:
+                lite.execute("create table activities (activity_id, start_time, name)")
+                lite.executemany("insert into activities values (?, '2026-10-29 09:00:00', 'old_name')", [("1",), ("2",)])
+                lite.commit()
+            (activities / "activity_1.json").write_text("{}", encoding="utf-8")
+            self.assertEqual(run_batch.local_ids(db, activities), {"1"})
+            with redirect_stdout(io.StringIO()), self.assertRaises(Failure) as caught:
+                # 목록 조회가 실패해 CLI가 아무것도 받지 않았다 (종료 코드 0, 로그인 표식은 갱신)
+                run_batch.collect({"1", "2"}, False, lambda latest: None, lambda: run_batch.local_ids(db, activities))
+            self.assertEqual(caught.exception.kind, "incomplete")
+
+
+class SupabaseOnlyTests(unittest.TestCase):
+    def setUp(self):
+        run_batch.WARNINGS.clear()
+
+    def kept(self, supabase_ids, local):
+        with mock.patch("psycopg.connect") as connect, redirect_stdout(io.StringIO()):
+            connect.return_value.__enter__.return_value.execute.return_value = [(i,) for i in supabase_ids]
+            return run_batch.supabase_only("host=x", local)
+
+    def test_empty_remote_and_local_with_old_supabase_rows_warns(self):
+        self.assertEqual(self.kept([1, 2, 3, 4, 5], set()), {"1", "2", "3", "4", "5"})   # 0건 성공이 아니라 5건 보존
+        self.assertEqual(len(run_batch.WARNINGS), 1)
+
+    def test_supabase_matching_local_is_silent(self):
+        self.assertEqual(self.kept([1, 2], {"1", "2"}), set())
+        self.assertEqual(run_batch.WARNINGS, [])
+
+
 class SyncSupaTests(unittest.TestCase):
     def test_zero_rows_need_confirmed_empty_account(self):
         import sqlite3
@@ -855,10 +892,15 @@ def activities_db(config):
     return Path(config.get_db_dir()) / "garmin_activities.db"
 
 
-def local_ids(db_path):
-    """sync_supa.py의 업로드 대상과 같은 조건(start_time is not null), ID는 문자열로."""
+def local_ids(db_path, activities_dir):
+    """sync_supa.py의 업로드 대상과 같은 조건(start_time is not null)이면서 요약 JSON도 있는 ID, 문자열로.
+
+    GarminDB는 SQLite가 아니라 activity_<id>.json이 있는지로 다시 받을지 정한다. 둘 다 있으면 목록 조회가 실패한
+    실행도 정상 실행과 같은 결과다. JSON이 없으면(원본 정리·DB만 이전) 정상 조회가 다시 받아 갱신하므로 누락으로 본다.
+    """
     with closing(sqlite3.connect(db_path)) as db:
-        return {str(row[0]) for row in db.execute("select activity_id from activities where start_time is not null")}
+        ids = {str(row[0]) for row in db.execute("select activity_id from activities where start_time is not null")}
+    return {i for i in ids if (activities_dir / f"activity_{i}.json").is_file()}
 
 
 def ensure_download_all(config_file, count):
@@ -873,9 +915,10 @@ def ensure_download_all(config_file, count):
 
 
 def collect(remote, full_first, run_cli, read_local):
-    """CLI 다운로드·import 뒤 원격 ID가 SQLite에 모두 있어야 완료다 (건수가 같아도 ID가 빠지면 실패).
+    """CLI 다운로드·import 뒤 원격 ID가 모두 수집돼야(local_ids: SQLite 행 + 요약 JSON) 완료다 (건수가 같아도 ID가 빠지면 실패).
 
-    필수 요약 실패는 ID 누락으로 드러나고, 원본 FIT만 없는 수동 활동은 요약 행이 있어 통과한다.
+    목록·요약 조회 실패는 GarminDB가 로그만 남기므로 ID 누락으로 판별한다. 원본 FIT·상세 JSON만 없는 활동은
+    요약이 있어 통과한다(정상 실행에서도 GarminDB가 다시 받지 않는 선택 항목).
     """
     missing = None
     if not full_first:
@@ -905,6 +948,16 @@ def run_garmindb(args, env, log, timeout, login_marker, run=run_child, on_line=N
         raise Failure("garmin", f"GarminDB 수집이 실패했습니다(종료 코드 {code}). 로그를 확인하세요.")
     if not login_marker.is_file() or login_marker.stat().st_mtime_ns == before:
         raise Failure("garmin", "GarminDB가 Garmin에 로그인하지 못해 수집하지 않았습니다. 잠시 뒤 다시 동기화하세요.")
+
+
+def supabase_only(dsn, local):
+    """업로드 전에 Supabase에만 있는 기록(이전 PC·다른 계정 업로드, Garmin에서 삭제)을 찾아 경고한다. 지우지 않는다."""
+    import psycopg
+    with psycopg.connect(dsn, connect_timeout=30) as pg:
+        kept = {str(row[0]) for row in pg.execute("select activity_id from garmin_activity")} - local
+    if kept:
+        warn(f"Garmin에 없는 기록 {len(kept)}건이 Supabase·gist 통계에 남아 있습니다. 삭제는 반영하지 않습니다.")
+    return kept
 
 
 def upload(env, log, run=run_child):
@@ -946,17 +999,19 @@ def sync(mode, values, prompt_allowed, log, factory=None):
                      env, log, CLI_TIMEOUT[stage], login_marker,
                      on_line=lambda line: emit("progress", stage=stage, message=line))
 
-    local = collect(remote, mode == "setup", run_cli, lambda: local_ids(db_path))
+    local = collect(remote, mode == "setup", run_cli, lambda: local_ids(db_path, Path(config.get_activities_dir())))
     try:
         changed = adapter.client.count_activities() != total
     except Exception:
         changed = True
     if changed:
         warn("수집하는 동안 Garmin 기록 수가 바뀌었거나 확인하지 못했습니다. 잠시 뒤 '지금 동기화'를 다시 실행하세요.")
+    kept = supabase_only(values["SUPA_DSN"], local)
     if not local:
         env["GARMIN_BOX_ALLOW_EMPTY"] = "1"  # collect가 원격 0건과 로컬 0행을 확인한 경우에만 여기 온다
     upload(env, log)
-    return {"activities": len(local), "gist_url": f"https://gist.github.com/{values['GIST_ID']}"}
+    # gist는 Supabase 전체로 통계를 만든다: 남은 기록도 세어 0건 성공으로 보이지 않게 한다
+    return {"activities": len(local) + len(kept), "gist_url": f"https://gist.github.com/{values['GIST_ID']}"}
 ```
 
 - [ ] **4단계: `sync_supa.py` 수정** (Linux 단독 실행 동작은 그대로)
@@ -1575,6 +1630,21 @@ public class ConfigFilesTests
         Assert.Contains("a@x.com", File.ReadAllText(Paths.GarminConfig));
         ConfigFiles.SaveAll(new AppSettings(), """{"credentials":{"user":"A@X.com"}}""", "SUPA_DSN=x\n", db);   // 같은 계정은 통과
     }
+
+    [Fact]
+    public void AccountChangeWithoutCheckedTokenDropsOldToken()
+    {
+        using var profile = new TempProfile();
+        Directory.CreateDirectory(Paths.InstallDir);
+        Directory.CreateDirectory(Paths.GarminDbDir);
+        File.WriteAllText(Paths.GarminConfig, """{"credentials":{"user":"a@x.com"}}""");
+        File.WriteAllText(Paths.GarminToken, "A");   // 로컬 DB 없음, B 확인은 로그인만 되고 확인 토큰 저장은 실패했다
+        ConfigFiles.SaveAll(new AppSettings(), """{"credentials":{"user":"b@x.com"}}""", "SUPA_DSN=x\n", NoDb);
+        Assert.False(File.Exists(Paths.GarminToken));   // 다음 동기화는 A 토큰이 아니라 B 자격증명으로 로그인한다
+        File.WriteAllText(Paths.GarminToken, "B");
+        ConfigFiles.SaveAll(new AppSettings(), """{"credentials":{"user":"B@x.com"}}""", "SUPA_DSN=x\n", NoDb);
+        Assert.Equal("B", File.ReadAllText(Paths.GarminToken));   // 같은 계정이면 기존 토큰을 그대로 쓴다
+    }
 }
 ```
 
@@ -1733,7 +1803,8 @@ static class ConfigFiles
     public static void SaveAll(AppSettings settings, string garminJson, string envText, string dbPath)
     {
         string? saved = File.Exists(Paths.GarminConfig) ? UserOf(File.ReadAllText(Paths.GarminConfig)) : null;
-        if (!string.IsNullOrEmpty(saved) && !string.Equals(saved, UserOf(garminJson), StringComparison.OrdinalIgnoreCase) && File.Exists(dbPath))
+        bool sameAccount = string.Equals(saved, UserOf(garminJson), StringComparison.OrdinalIgnoreCase);
+        if (!sameAccount && !string.IsNullOrEmpty(saved) && File.Exists(dbPath))
             throw new InvalidOperationException("이 PC에는 다른 Garmin 계정의 운동 DB가 있어 계정을 바꿀 수 없습니다.");
         SaveSettings(settings with { ConfigComplete = false });
         Directory.CreateDirectory(Paths.GarminDbDir);
@@ -1742,6 +1813,9 @@ static class ConfigFiles
         AtomicWrite(Paths.EnvFile, envText);
         // 연결 확인에서 받은 토큰은 설정이 저장된 뒤에만 운영 토큰이 된다. 저장하지 않으면 기존 계정 토큰이 그대로다.
         if (File.Exists(Paths.CheckToken)) File.Move(Paths.CheckToken, Paths.GarminToken, overwrite: true);
+        // 계정을 바꿨는데 확인 토큰이 없으면(로그인은 됐지만 토큰 저장 실패) 이전 계정 토큰으로 다음 동기화가 로그인하지 않게
+        // 지운다. 다음 동기화는 저장한 새 자격증명으로 로그인한다.
+        else if (!sameAccount) File.Delete(Paths.GarminToken);
         SaveSettings(settings with { ConfigComplete = true });
     }
 
@@ -2701,7 +2775,9 @@ Get-FileHash (Join-Path $out 'publish\GarminBox.exe') -Algorithm SHA256
 | 설정 창 하나만 열기, 저장 시점 계정 제약 재확인 (2차 리뷰 반영) | 6, 8, 12, 15 |
 | `File.Replace` 전에 기존 대상·백업 보호 (2차 리뷰 반영) | 8 |
 | MFA 입력 대기 중 시간 초과·취소 시 반환 (2차 리뷰 반영) | 9, 12, 15 |
-| 로그인 뒤 목록 실패는 ID 대조로 판별 (2차 리뷰 검토, 변경 없음) | 5 |
+| 로그인 뒤 목록 실패: 완료 조건을 SQLite 행 + 요약 JSON으로 (3차 리뷰 반영) | 5 |
+| 원격·로컬에 없는 Supabase 기록 경고와 완료 건수 반영 (3차 리뷰 반영) | 5 |
+| 계정 변경 저장 시 확인 토큰이 없으면 이전 계정 토큰 삭제 (3차 리뷰 반영) | 8 |
 | 원격 삭제·원격 0건 여분 기록 경고 후 진행 | 5 |
 | SQL·변환 오류 시 롤백과 gist 차단 | 5 |
 | EXE 경유 작업의 mutex, abandoned 복구 | 7, 12, 15 |
