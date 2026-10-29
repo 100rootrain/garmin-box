@@ -19,7 +19,8 @@ static class Paths
     public static string GarminToken => Path.Combine(GarminDbDir, "garmin_tokens.json");         // GarminDB 운영 토큰
     public static string CheckToken => Path.Combine(GarminDbDir, "garmin_tokens.check.json");    // 연결 확인용 (run_batch.py와 같은 이름)
     public static string EnvFile => Path.Combine(Home, ".garmin-box.env");
-    public static string StartMenuLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "garmin-box.lnk");
+    // Create: 폴더가 없을 때 빈 문자열을 받으면 바로가기가 현재 폴더(다운로드 폴더 등)에 생긴다
+    public static string StartMenuLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs, Environment.SpecialFolderOption.Create), "garmin-box.lnk");
 
     /// 첫 실행·재실행 모두 정보 입력 전에 통과해야 한다. 문제가 없으면 null.
     public static string? Preflight()
