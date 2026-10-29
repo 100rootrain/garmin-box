@@ -64,7 +64,7 @@ assert result.returncode == 0 and "--activities" in result.stdout
 report["checks"].append("garmindb_cli_help")
 sys.path.insert(0, str(args.repo))
 suite = unittest.TestSuite()
-for file in (args.repo / "test_update_gist.py", args.repo / "tests" / "test_docs_and_launcher.py"):
+for file in (args.repo / "test_update_gist.py", *sorted((args.repo / "tests").glob("test_*.py"))):
     spec = importlib.util.spec_from_file_location(file.stem, file)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
