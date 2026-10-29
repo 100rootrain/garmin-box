@@ -36,12 +36,8 @@ public class SchedulerTests
         Assert.Equal(legacy, Scheduler.IsLegacyBatch(Task(command, arguments)));
 
     [Fact]
-    public void MissingTaskIsNull()   // 실제 작업 스케줄러를 읽기만 한다
-    {
-        dynamic service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service")!)!;
-        service.Connect();
-        Assert.Null(Scheduler.FindTask(service.GetFolder(@"\"), $"garmin-box-test-{Guid.NewGuid():N}"));
-    }
+    public void MissingTaskIsNull() =>   // 실제 작업 스케줄러를 읽기만 한다
+        Assert.Null(Scheduler.FindTask(Scheduler.Root(), $"garmin-box-test-{Guid.NewGuid():N}"));
 
     [Fact]
     public void OnlyOurExecutableCountsAsOurs()

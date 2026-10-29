@@ -201,6 +201,11 @@ sealed class MainForm : Form
         var lines = new List<string>();
         if (!settings.ConfigComplete)
             lines.Add("설정이 완료되지 않았습니다. 정보를 입력하고 연결 확인 → 설정 시작을 누르세요.");
+        else if (!ScheduleRegistered())
+        {
+            lines.Add("매일 자동 실행이 등록되어 있지 않습니다. '예약 다시 등록'을 누르세요.");
+            scheduleButton.Visible = true;
+        }
         if (status is null)
             lines.Add("최근 동기화 결과: 없음");
         else
@@ -214,6 +219,12 @@ sealed class MainForm : Form
                 lines.Add("Garmin 재인증 필요: 비밀번호 칸을 비운 채 연결 확인을 눌러 다시 로그인하세요.");
         }
         recentLabel.Text = string.Join("\n", lines);
+    }
+
+    static bool ScheduleRegistered()
+    {
+        try { return Scheduler.IsRegistered(Paths.Exe); }
+        catch (Exception) { return false; }   // 읽지 못하면 버튼을 보여 주고, 누르면 실제 오류가 나온다
     }
 
     void OnInputChanged(object? sender, EventArgs e)
@@ -375,6 +386,7 @@ sealed class MainForm : Form
             scheduleButton.Visible = true;
             ShowFailure($"동기화 성공 / 자동 실행 설정 실패: {e.Message}");
         }
+        ShowRecent();
         UpdateButtons();
     }
 

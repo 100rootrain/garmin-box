@@ -124,7 +124,7 @@ API 검사는 대화형 터미널에서는 로그인 정보를 가림 입력한�
 
 | 항목 | 값 |
 |---|---|
-| EXE SHA-256 | `8b8cf941fcc19aa6db2edc8b2dbdb0af49e30fa321a85ec1462b1b5e9194b19c` |
+| EXE SHA-256 | `2eb57a51ea33c0e3e290931bf9075a4ca50bc4afac0e307370a6bde7d3b7bcbe` |
 | payload ZIP SHA-256 | `97b23f37963cf9b81f9e3fa8b5f7014121e157245d13c7ff9df43888918c0ad3` |
 | 번들 검증 | 빌드 폴더와 다른 경로에 풀어 `status=passed`, 저장소 테스트 53개 통과 |
 | 자동 테스트 | Python 49개(`-I` unittest), C# 39개 통과, Release 빌드 경고·오류 0 |
@@ -137,7 +137,7 @@ API 검사는 대화형 터미널에서는 로그인 정보를 가림 입력한�
 | 5. 예약 실행 경로(`--sync --scheduled`) | 부분 통과. 설치된 EXE → Job → 번들 Python `run_batch.py` → `status.json`(`설정이 완료되지 않았습니다…`) → 종료 코드 1, 남은 `python.exe` 없음. 작업 스케줄러 등록·즉시 실행은 실제 작업이 생기므로 하지 않았다(미검증). |
 | 6. 강제 종료 | 통과(테스트 스크립트). 임시 설치본의 `run_batch.py`를 손자 프로세스를 띄우고 기다리는 스크립트로 바꾼 뒤 EXE만 강제 종료하자 Python과 손자가 모두 종료됐다. 다음 실행은 abandoned 잠금을 얻어 정상 진행했다(`status.json` 갱신). 실제 GarminDB CLI 손자로는 미검증. |
 | 7. 중복 실행 | 부분 통과. 동기화가 진행 중일 때 두 번째 `--sync --scheduled`는 새 Python 없이 종료 코드 1. 설정 창 두 번 열기·MFA 창 취소는 미검증. |
-| 3. 실제 계정 첫 설정 (사용자 실행, 이전 EXE `c957cd84…`) | 연결 확인 3항목 통과 → 설정 시작: GarminDB 전체 수집(다운로드 1,138건 34분, FIT 가져오기, 분석) → `synced 1138 sqlite rows, supa total 1138` → `gist updated` → `status.json` setup 성공 1,138건. **예약 등록은 실패**: `지정된 파일을 찾을 수 없습니다. (0x80070002)`. 없는 작업의 `GetTask`를 dynamic COM이 `COMException`이 아니라 `FileNotFoundException`으로 던져 `catch (COMException)`을 빠져나갔다. HRESULT로 잡도록 고치고 실제 작업 스케줄러에서 없는 이름을 조회하는 테스트(`MissingTaskIsNull`, 수정 전 같은 예외로 실패)를 더했다. 수정한 EXE의 '예약 다시 등록'과 예약 실행은 미검증. |
+| 3. 실제 계정 첫 설정 (사용자 실행, 이전 EXE `c957cd84…`) | 연결 확인 3항목 통과 → 설정 시작: GarminDB 전체 수집(다운로드 1,138건 34분, FIT 가져오기, 분석) → `synced 1138 sqlite rows, supa total 1138` → `gist updated` → `status.json` setup 성공 1,138건. **예약 등록은 실패**: `지정된 파일을 찾을 수 없습니다. (0x80070002)`. 없는 작업의 `GetTask`를 dynamic COM이 `COMException`이 아니라 `FileNotFoundException`으로 던져 `catch (COMException)`을 빠져나갔다. HRESULT로 잡도록 고치고 실제 작업 스케줄러에서 없는 이름을 조회하는 테스트(`MissingTaskIsNull`, 수정 전 같은 예외로 실패)를 더했다. 실패한 창을 닫으면 버튼이 사라져 전체 설정을 다시 해야 했으므로, 설정 완료인데 예약이 없으면 창을 열 때 안내와 `예약 다시 등록`을 보여 준다(임시 프로필의 설정 완료 상태로 열어 확인). 수정한 EXE의 '예약 다시 등록'과 예약 실행은 미검증. |
 | 4. 토큰 폴백, 8. 예전 수동 작업, 9. 깨끗한 VM, 화면 배율 150% | 미검증(사용자 입력·실제 작업·VM 필요). |
 
 ## 남은 확인

@@ -67,11 +67,19 @@ static class Scheduler
     public static bool IsLegacyBatch(string xml) => Execs(xml).Any(exec =>
         Regex.IsMatch(exec.Value, @"run_garmin_batch(_hidden\.vbs|\.ps1)", RegexOptions.IgnoreCase));
 
-    public static ScheduleOutcome Register(string exe, TimeOnly at)
+    public static dynamic Root()
     {
         dynamic service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service")!)!;
         service.Connect();
-        dynamic root = service.GetFolder(@"\");
+        return service.GetFolder(@"\");
+    }
+
+    /// 등록 실패 뒤 창을 닫았다가 다시 열어도 '예약 다시 등록'을 보여 주기 위한 확인
+    public static bool IsRegistered(string exe) => FindTask(Root(), TaskName) is { } task && IsOurs((string)((dynamic)task).Xml, exe);
+
+    public static ScheduleOutcome Register(string exe, TimeOnly at)
+    {
+        dynamic root = Root();
         // root가 dynamic이라 호출 결과도 dynamic이 된다. 정적 타입으로 먼저 받아야 LINQ 람다를 쓸 수 있다 (CS1977).
         List<(string Path, bool Enabled)> tasks = LegacyTasks(root);
         var legacy = tasks.Where(t => t.Enabled).Select(t => t.Path).ToList();
