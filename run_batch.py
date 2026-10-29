@@ -280,11 +280,12 @@ def schema_problems(columns):
     return problems
 
 
-def create_schema(dsn):
-    """create table if not exists만 실행한다. 기존 테이블은 바꾸거나 지우지 않는다."""
+def check_schema(dsn, create):
+    """create면 create table if not exists만 실행한 뒤 필수 열·소수 자릿수를 검사한다. 기존 테이블은 바꾸거나 지우지 않는다."""
     import psycopg
     with psycopg.connect(dsn, connect_timeout=30) as pg:
-        pg.execute((HERE / "schema.sql").read_text(encoding="utf-8"))
+        if create:
+            pg.execute((HERE / "schema.sql").read_text(encoding="utf-8"))
         problems = schema_problems(pg.execute(COLUMNS_SQL).fetchall())
     if problems:
         raise Failure("schema", "Supabase garmin_activity 테이블을 그대로 쓸 수 없습니다: " + "; ".join(problems)
@@ -409,12 +410,12 @@ def child_env(values, **extra):
 
 
 def sync(mode, values, prompt_allowed, log, factory=None):
-    """setup: 테이블 생성 + 전체 수집, sync: 최근 수집(누락 시 전체 보충). 둘 다 업로드 전 SQLite 대조."""
+    """setup: 테이블 생성 + 전체 수집, sync: 최근 수집(누락 시 전체 보충). 둘 다 테이블 검사와 업로드 전 SQLite 대조."""
     for key, label in (("SUPA_DSN", "Supabase 연결 문자열"), ("GITHUB_TOKEN", "GitHub 토큰"), ("GIST_ID", "Gist ID")):
         need(values, key, label)
-    if mode == "setup":
-        emit("progress", stage="schema", message="Supabase 테이블 확인")
-        create_schema(values["SUPA_DSN"])
+    # setup이 거부한 테이블을 지금 동기화·예약 실행이 반올림해 올리지 않게 모든 업로드 경로에서 검사한다
+    emit("progress", stage="schema", message="Supabase 테이블 확인")
+    check_schema(values["SUPA_DSN"], create=mode == "setup")
     config = saved_garmin_config()
     emit("progress", stage="login", message="Garmin 로그인")
     adapter = garmin_login(config, prompt_allowed, factory)

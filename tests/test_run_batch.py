@@ -371,6 +371,20 @@ class SchemaTests(unittest.TestCase):
         problems = run_batch.schema_problems(columns)
         self.assertEqual(len(problems), 2)
 
+    def test_rejected_table_blocks_setup_and_later_sync(self):
+        """setup이 거부한 테이블에 지금 동기화·예약 실행(sync)이 반올림해 올리지 않는다. 테이블 생성은 setup만 한다."""
+        rounding = [("distance_km", "numeric", 0) if c[0] == "distance_km" else c for c in self.COLUMNS]
+        values = {"SUPA_DSN": "host=x", "GITHUB_TOKEN": "t", "GIST_ID": "g"}
+        for mode, statements in (("setup", 2), ("sync", 1)):
+            with mock.patch("psycopg.connect") as connect, redirect_stdout(io.StringIO()), \
+                    mock.patch.object(run_batch, "saved_garmin_config", side_effect=AssertionError("Garmin 단계까지 갔다")):
+                pg = connect.return_value.__enter__.return_value
+                pg.execute.return_value.fetchall.return_value = rounding
+                with self.assertRaises(Failure) as caught:
+                    run_batch.sync(mode, values, False, print)
+            self.assertEqual(caught.exception.kind, "schema", mode)
+            self.assertEqual(pg.execute.call_count, statements, mode)
+
 
 class LocalIdsTests(unittest.TestCase):
     """요약 JSON 조건은 원격 ID의 수집 완료 판정에만 쓰고, 여분·건수는 sync_supa가 올리는 SQLite 전체 행으로 센다."""
