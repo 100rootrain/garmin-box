@@ -78,8 +78,7 @@ static class Scheduler
         if (legacy.Count > 0)   // 자동 삭제·이전하지 않고 안내만 한다
             return new(false, "예전 수동 예약 작업이 켜져 있어 새 예약을 켜지 않았습니다. 작업 스케줄러에서 다음 작업을 '사용 안 함'으로 바꾼 뒤 '예약 다시 등록'을 누르세요: "
                 + string.Join(", ", legacy), null);
-        dynamic? existing = null;
-        try { existing = root.GetTask(TaskName); } catch (COMException) { }   // 없으면 0x80070002
+        dynamic? existing = FindTask(root, TaskName);
         // 같은 이름의 예전 수동 작업은 위 안내대로 꺼져 있으면 덮어쓴다(켜져 있으면 위에서 이미 멈췄다)
         if (existing is not null && !IsOurs((string)existing.Xml, exe) && !IsLegacyBatch((string)existing.Xml))
             return new(false, $"같은 이름({TaskName})의 다른 예약 작업이 있어 덮어쓰지 않았습니다.", null);
@@ -94,6 +93,12 @@ static class Scheduler
             : new(true, "매일 자동 실행을 등록했습니다.", (DateTime)task.NextRunTime);
     }
 
+    /// dynamic COM 호출은 HRESULT를 .NET 예외로 바꿔 던진다: 없는 작업(0x80070002)은 COMException이 아니라 FileNotFoundException이다.
+    public static object? FindTask(dynamic folder, string name)
+    {
+        try { return folder.GetTask(name); } catch (Exception e) when (e.HResult == unchecked((int)0x80070002)) { return null; }
+    }
+
     static List<(string Path, bool Enabled)> LegacyTasks(dynamic folder)
     {
         // 읽을 수 없는 작업·폴더 하나 때문에 나머지(켜진 예전 작업이 있을 수 있다)를 건너뛰지 않게 따로 잡는다
@@ -103,15 +108,15 @@ static class Scheduler
             foreach (dynamic task in folder.GetTasks(1 /* 숨김 포함 */))
             {
                 try { if (IsLegacyBatch((string)task.Xml)) found.Add(((string)task.Path, (bool)task.Enabled)); }
-                catch (Exception e) when (e is COMException or UnauthorizedAccessException) { }   // 다른 사용자·시스템 작업
+                catch (Exception e) when (e is COMException or UnauthorizedAccessException or IOException) { }   // 다른 사용자·시스템 작업
             }
         }
-        catch (Exception e) when (e is COMException or UnauthorizedAccessException) { }   // 작업 목록을 못 읽는 폴더
+        catch (Exception e) when (e is COMException or UnauthorizedAccessException or IOException) { }   // 작업 목록을 못 읽는 폴더
         try
         {
             foreach (dynamic sub in folder.GetFolders(0)) found.AddRange(LegacyTasks(sub));   // 하위 폴더는 재귀 안에서 따로 잡는다
         }
-        catch (Exception e) when (e is COMException or UnauthorizedAccessException) { }
+        catch (Exception e) when (e is COMException or UnauthorizedAccessException or IOException) { }
         return found;
     }
 }
