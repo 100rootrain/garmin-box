@@ -120,14 +120,16 @@ API 검사는 대화형 터미널에서는 로그인 정보를 가림 입력한�
 
 ## 제품 구현 검증 (GarminBox.exe 0.1.0)
 
-`build\release.ps1`로 만든 self-contained 단일 EXE(93,164,864 bytes)를 Windows 10 x64(빌드 19045)에서 실행했다. 실제 `%LOCALAPPDATA%`·`%USERPROFILE%`를 건드리지 않도록 두 환경 변수를 임시 ASCII 폴더로 바꿔 실행했고, 실제 Garmin·Supabase·GitHub에는 연결하지 않았다. 아래 EXE SHA-256은 예약 등록 수정(아래 "실제 계정 첫 설정") 뒤 같은 payload로 다시 publish한 것이다.
+`build\release.ps1`로 만든 self-contained 단일 EXE를 Windows 10 x64(빌드 19045)에서 실행했다. 실제 `%LOCALAPPDATA%`·`%USERPROFILE%`를 건드리지 않도록 두 환경 변수를 임시 ASCII 폴더로 바꿔 실행했고, 실제 Garmin·Supabase·GitHub에는 연결하지 않았다. 아래 단계별 결과는 최초 EXE(`c957cd84…`)와 예약 등록 수정 EXE(`2eb57a51…`) 기준이다.
+
+리뷰 반영(sync 경로 테이블 검사, 예약 재시도 조건) 뒤 `release.ps1`을 다시 실행했다. payload·번들 검증·전체 테스트는 통과했고, 마지막 publish는 사용자가 열어 둔 `build\out\publish\GarminBox.exe` 때문에 덮어쓰지 못해 같은 명령으로 `build\out\publish-next`에 publish했다.
 
 | 항목 | 값 |
 |---|---|
-| EXE SHA-256 | `2eb57a51ea33c0e3e290931bf9075a4ca50bc4afac0e307370a6bde7d3b7bcbe` |
-| payload ZIP SHA-256 | `97b23f37963cf9b81f9e3fa8b5f7014121e157245d13c7ff9df43888918c0ad3` |
-| 번들 검증 | 빌드 폴더와 다른 경로에 풀어 `status=passed`, 저장소 테스트 53개 통과 |
-| 자동 테스트 | Python 49개(`-I` unittest), C# 39개 통과, Release 빌드 경고·오류 0 |
+| EXE SHA-256 | `b75f7eaf0422fc43a58f63e7f482c62138e09de273dc252bd5d647c9d13201ed` (93,165,888 bytes) |
+| payload ZIP SHA-256 | `615652a7ee4077075b87e18a741b06c8b3f981aec3e90511e4f2e6d2810fb72c` |
+| 번들 검증 | 빌드 폴더와 다른 경로에 풀어 `status=passed`, 저장소 테스트 54개 통과 |
+| 자동 테스트 | Python 50개(`-I` unittest), C# 40개 통과, Release 빌드 경고·오류 0 |
 
 | 계획 작업 15 단계 | 결과 |
 |---|---|
@@ -136,8 +138,8 @@ API 검사는 대화형 터미널에서는 로그인 정보를 가림 입력한�
 | 2. 비 ASCII 경로 차단 | 통과. `LOCALAPPDATA=…\한글`에서 설계 문구와 실제 경로가 표시되고 `garmin-box` 폴더는 생기지 않았다. 해당 폴더에는 Windows가 만든 `Microsoft\Windows\Caches`만 생겼다(환경 변수를 바꾼 실행에서 OS가 만드는 캐시 폴더). |
 | 5. 예약 실행 경로(`--sync --scheduled`) | 부분 통과. 설치된 EXE → Job → 번들 Python `run_batch.py` → `status.json`(`설정이 완료되지 않았습니다…`) → 종료 코드 1, 남은 `python.exe` 없음. 작업 스케줄러 등록·즉시 실행은 실제 작업이 생기므로 하지 않았다(미검증). |
 | 6. 강제 종료 | 통과(테스트 스크립트). 임시 설치본의 `run_batch.py`를 손자 프로세스를 띄우고 기다리는 스크립트로 바꾼 뒤 EXE만 강제 종료하자 Python과 손자가 모두 종료됐다. 다음 실행은 abandoned 잠금을 얻어 정상 진행했다(`status.json` 갱신). 실제 GarminDB CLI 손자로는 미검증. |
-| 7. 중복 실행 | 부분 통과. 동기화가 진행 중일 때 두 번째 `--sync --scheduled`는 새 Python 없이 종료 코드 1. 설정 창 두 번 열기·MFA 창 취소는 미검증. |
-| 3. 실제 계정 첫 설정 (사용자 실행, 이전 EXE `c957cd84…`) | 연결 확인 3항목 통과 → 설정 시작: GarminDB 전체 수집(다운로드 1,138건 34분, FIT 가져오기, 분석) → `synced 1138 sqlite rows, supa total 1138` → `gist updated` → `status.json` setup 성공 1,138건. **예약 등록은 실패**: `지정된 파일을 찾을 수 없습니다. (0x80070002)`. 없는 작업의 `GetTask`를 dynamic COM이 `COMException`이 아니라 `FileNotFoundException`으로 던져 `catch (COMException)`을 빠져나갔다. HRESULT로 잡도록 고치고 실제 작업 스케줄러에서 없는 이름을 조회하는 테스트(`MissingTaskIsNull`, 수정 전 같은 예외로 실패)를 더했다. 실패한 창을 닫으면 버튼이 사라져 전체 설정을 다시 해야 했으므로, 설정 완료인데 예약이 없으면 창을 열 때 안내와 `예약 다시 등록`을 보여 준다(임시 프로필의 설정 완료 상태로 열어 확인). 수정한 EXE의 '예약 다시 등록'과 예약 실행은 미검증. |
+| 7. 중복 실행 | 부분 통과. 동기화가 진행 중일 때 두 번째 `--sync --scheduled`는 새 Python 없이 종료 코드 1. 사용자 설정 창이 열린 동안 다른 EXE로 창을 열면 "garmin-box 설정 창이 이미 열려 있습니다."만 표시됐다. MFA 창 취소는 미검증. |
+| 3. 실제 계정 첫 설정 (사용자 실행, 이전 EXE `c957cd84…`) | 연결 확인 3항목 통과 → 설정 시작: GarminDB 전체 수집(다운로드 1,138건 34분, FIT 가져오기, 분석) → `synced 1138 sqlite rows, supa total 1138` → `gist updated` → `status.json` setup 성공 1,138건. **예약 등록은 실패**: `지정된 파일을 찾을 수 없습니다. (0x80070002)`. 없는 작업의 `GetTask`를 dynamic COM이 `COMException`이 아니라 `FileNotFoundException`으로 던져 `catch (COMException)`을 빠져나갔다. HRESULT로 잡도록 고치고 실제 작업 스케줄러에서 없는 이름을 조회하는 테스트(`MissingTaskIsNull`, 수정 전 같은 예외로 실패)를 더했다. 실패한 창을 닫으면 버튼이 사라져 전체 설정을 다시 해야 했으므로, 창을 열 때도 예약이 없으면 안내와 `예약 다시 등록`을 보여 준다. 리뷰 반영 후 조건은 설정 저장보다 나중의 성공 상태(`SyncedSinceSaved`, 단위 테스트)이며, 사용자 창이 열려 있어 이 조건의 EXE 화면 확인은 하지 못했다. 사용자가 `2eb57a51…`로 다시 등록한 작업을 작업 스케줄러에서 읽으니 설계와 같았다: `StartBoundary=2026-10-30T09:10:00`, `--sync --scheduled`, Interactive·Limited, `PT1H`, 배터리 조건 없음, `StartWhenAvailable=true`, 아직 실행 전(267011). 예약 실행은 미검증. |
 | 4. 토큰 폴백, 8. 예전 수동 작업, 9. 깨끗한 VM, 화면 배율 150% | 미검증(사용자 입력·실제 작업·VM 필요). |
 
 ## 남은 확인
