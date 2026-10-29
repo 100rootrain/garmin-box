@@ -406,7 +406,7 @@ sealed class MainForm : Form
 
     /// 잠금을 잡고 run_batch.py를 실행한다. 설정 완료 표식은 run_batch.py가 매번, 런타임 표식은 Deploy가(시작 때, 또는
     /// 미뤘으면 여기서) 확인하므로 abandoned 잠금은 경고만 남긴다.
-    async Task<RunResult?> RunLocked(string mode, Dictionary<string, string> env, TimeSpan timeout, Action? prepare = null)
+    internal async Task<RunResult?> RunLocked(string mode, Dictionary<string, string> env, TimeSpan timeout, Action? prepare = null)
     {
         using var held = AppLock.TryAcquire();
         if (held is null) { ShowFailure("다른 작업(동기화 또는 설정)이 진행 중입니다. 끝난 뒤 다시 시도하세요."); return null; }
@@ -428,7 +428,15 @@ sealed class MainForm : Form
             }
             return result;
         }
-        catch (Exception e) { ShowFailure(e.Message); return null; }
+        catch (Exception e)
+        {
+            ShowFailure(e.Message);
+            // 시작하지 못한 실행도 최근 결과로 남긴다(Program.Sync와 같은 규칙). 안 남기면 이전 성공이 최근 결과로 보인다.
+            if (mode != "check")
+                try { ConfigFiles.WriteFailureStatus(mode, $"시작하지 못했습니다: {e.Message}"); }
+                catch (Exception) { }   // 상태 파일도 못 쓰면 화면의 오류가 전부다(async void 호출자로 던지지 않는다)
+            return null;
+        }
         finally
         {
             running.Dispose();
