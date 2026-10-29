@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>GarminBox</AssemblyName>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="GarminBox.Tests" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('payload\payload.zip')">
+    <EmbeddedResource Include="payload\payload.zip" LogicalName="payload.zip" />
+    <EmbeddedResource Include="payload\payload.sha256" LogicalName="payload.sha256" />
+  </ItemGroup>
+</Project>
