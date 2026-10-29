@@ -144,6 +144,21 @@ public class ConfigFilesTests
     }
 
     [Fact]
+    public void UnreportedFailureKeepsStatusPythonWrote()
+    {
+        using var profile = new TempProfile();
+        Directory.CreateDirectory(Paths.InstallDir);
+        File.WriteAllText(Paths.Status, """{"result":"success"}""");
+        var before = File.GetLastWriteTimeUtc(Paths.Status);
+        ConfigFiles.RecordUnreportedFailure("sync", before, 0);
+        Assert.Equal("success", (string?)ConfigFiles.ReadStatus()?["result"]);   // 정상 종료는 그대로
+        File.WriteAllText(Paths.Status, """{"result":"reauth"}""");
+        File.SetLastWriteTimeUtc(Paths.Status, before.AddSeconds(1));
+        ConfigFiles.RecordUnreportedFailure("sync", before, 4);
+        Assert.Equal("reauth", (string?)ConfigFiles.ReadStatus()?["result"]);   // 이번 실행의 Python이 남긴 원인
+    }
+
+    [Fact]
     public void AccountChangeIsRefusedAtSaveWhenDbAppearedAfterCheck()
     {
         using var profile = new TempProfile();

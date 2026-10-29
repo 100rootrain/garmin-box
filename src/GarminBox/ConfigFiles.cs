@@ -128,6 +128,14 @@ static class ConfigFiles
     public static bool SyncedSinceSaved() => LoadSettings().ConfigComplete && (string?)ReadStatus()?["result"] == "success"
         && File.GetLastWriteTimeUtc(Paths.Status) > File.GetLastWriteTimeUtc(Paths.Settings);
 
+    /// run_batch.py는 main에 들어간 뒤의 실패를 모두 상태로 남긴다. 그 전에 끝난 오류 종료(스크립트 열기·import 실패 등)는
+    /// 상태 파일이 실행 전 그대로이므로 기본 실패를 남긴다. Python이 남긴 reauth·실패 원인은 덮어쓰지 않는다.
+    public static void RecordUnreportedFailure(string mode, DateTime statusBefore, int exitCode)
+    {
+        if (exitCode != 0 && File.GetLastWriteTimeUtc(Paths.Status) == statusBefore)
+            WriteFailureStatus(mode, $"결과를 남기지 못하고 종료됐습니다(종료 코드 {exitCode}). 다시 시도하세요.");
+    }
+
     /// Python이 상태를 쓰지 못한 경우(시간 초과로 종료, 시작 실패)에만 쓴다.
     public static void WriteFailureStatus(string mode, string message) => AtomicWrite(Paths.Status, new JsonObject
     {

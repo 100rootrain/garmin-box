@@ -419,6 +419,7 @@ sealed class MainForm : Form
         {
             if (deployPending) { await Task.Run(Installer.Deploy); deployPending = false; }   // 시작 때 잠금이 바빠 미룬 배치
             prepare?.Invoke();
+            var before = File.GetLastWriteTimeUtc(Paths.Status);
             var result = await PythonRunner.RunAsync(Paths.Python, Paths.RunBatch, [mode], env, OnEvent, AskMfa, timeout, running.Token);
             if (result.TimedOut || result.Cancelled)
             {
@@ -426,6 +427,7 @@ sealed class MainForm : Form
                 if (mode != "check") ConfigFiles.WriteFailureStatus(mode, why);
                 ShowFailure(why);
             }
+            else if (mode != "check") ConfigFiles.RecordUnreportedFailure(mode, before, result.ExitCode);
             return result;
         }
         catch (Exception e)

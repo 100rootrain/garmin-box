@@ -25,7 +25,7 @@ static class Program
     }
 
     /// 예약 작업·수동 런처 경로. MFA가 필요하면 기다리지 않고 재인증 필요로 끝난다.
-    static int Sync(bool scheduled)
+    internal static int Sync(bool scheduled)
     {
         int code;
         using (var held = AppLock.TryAcquire())
@@ -38,9 +38,11 @@ static class Program
             }
             try
             {
+                var before = File.GetLastWriteTimeUtc(Paths.Status);
                 var result = PythonRunner.RunAsync(Paths.Python, Paths.RunBatch, ["sync", "--no-prompt"], new Dictionary<string, string>(),
                     _ => { }, _ => Task.FromResult<string?>(null), TimeSpan.FromMinutes(55), CancellationToken.None).GetAwaiter().GetResult();
                 if (result.TimedOut) ConfigFiles.WriteFailureStatus("sync", "55분 안에 끝나지 않아 중단했습니다.");
+                else ConfigFiles.RecordUnreportedFailure("sync", before, result.ExitCode);
                 code = result.ExitCode;
             }
             catch (Exception e)
