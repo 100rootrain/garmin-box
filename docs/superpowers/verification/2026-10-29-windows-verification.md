@@ -118,6 +118,27 @@ C#의 `StandardInputEncoding`, `StandardOutputEncoding`, `StandardErrorEncoding`
 
 API 검사는 대화형 터미널에서는 로그인 정보를 가림 입력한다. 현재 세션에서는 임시 WinForms 창에서 입력받아 자식 프로세스의 환경으로 전달한다. 로그인 정보와 토큰은 저장하지 않으며, 인증이 끝나지 않은 상태를 API 검증 성공으로 처리하지 않는다.
 
+## 제품 구현 검증 (GarminBox.exe 0.1.0)
+
+`build\release.ps1`로 만든 self-contained 단일 EXE(93,164,864 bytes)를 Windows 10 x64(빌드 19045)에서 실행했다. 실제 `%LOCALAPPDATA%`·`%USERPROFILE%`를 건드리지 않도록 두 환경 변수를 임시 ASCII 폴더로 바꿔 실행했고, 실제 Garmin·Supabase·GitHub에는 연결하지 않았다. 아래 EXE SHA-256은 시작 메뉴 경로 수정(아래 4번째 항목) 뒤 다시 publish한 것이다.
+
+| 항목 | 값 |
+|---|---|
+| EXE SHA-256 | `c957cd84801a6a2f48a7b2d1fbc3953f58018e1a6ce6481fefb408ac3a0e8223` |
+| payload ZIP SHA-256 | `97b23f37963cf9b81f9e3fa8b5f7014121e157245d13c7ff9df43888918c0ad3` |
+| 번들 검증 | 빌드 폴더와 다른 경로에 풀어 `status=passed`, 저장소 테스트 53개 통과 |
+| 자동 테스트 | Python 49개(`-I` unittest), C# 38개 통과, Release 빌드 경고·오류 0 |
+
+| 계획 작업 15 단계 | 결과 |
+|---|---|
+| 1. 다운로드 폴더에서 실행 → 배치 | 통과(임시 프로필). `garmin-box\GarminBox.exe` 복사, `runtime` 압축 해제와 표식, `runtime\app\run_batch.py` 확인. 화면에 "프로그램 파일 준비 완료". 비밀번호·DSN·토큰 칸은 UI Automation으로도 값을 읽을 수 없었다(가림). |
+| 1. 시작 메뉴 바로가기 | 처음에는 실패: 임시 프로필에서 `GetFolderPath(Programs)`가 빈 문자열을 돌려줘 바로가기가 작업 폴더에 생겼다. `SpecialFolderOption.Create`로 고친 뒤 프로필의 `Start Menu\Programs\garmin-box.lnk`가 설치된 EXE를 가리키는 것을 확인했다. |
+| 2. 비 ASCII 경로 차단 | 통과. `LOCALAPPDATA=…\한글`에서 설계 문구와 실제 경로가 표시되고 `garmin-box` 폴더는 생기지 않았다. 해당 폴더에는 Windows가 만든 `Microsoft\Windows\Caches`만 생겼다(환경 변수를 바꾼 실행에서 OS가 만드는 캐시 폴더). |
+| 5. 예약 실행 경로(`--sync --scheduled`) | 부분 통과. 설치된 EXE → Job → 번들 Python `run_batch.py` → `status.json`(`설정이 완료되지 않았습니다…`) → 종료 코드 1, 남은 `python.exe` 없음. 작업 스케줄러 등록·즉시 실행은 실제 작업이 생기므로 하지 않았다(미검증). |
+| 6. 강제 종료 | 통과(테스트 스크립트). 임시 설치본의 `run_batch.py`를 손자 프로세스를 띄우고 기다리는 스크립트로 바꾼 뒤 EXE만 강제 종료하자 Python과 손자가 모두 종료됐다. 다음 실행은 abandoned 잠금을 얻어 정상 진행했다(`status.json` 갱신). 실제 GarminDB CLI 손자로는 미검증. |
+| 7. 중복 실행 | 부분 통과. 동기화가 진행 중일 때 두 번째 `--sync --scheduled`는 새 Python 없이 종료 코드 1. 설정 창 두 번 열기·MFA 창 취소는 미검증. |
+| 3. 실제 계정 첫 동기화, 4. 토큰 폴백, 8. 예전 수동 작업, 9. 깨끗한 VM, 화면 배율 150% | 미검증(사용자 입력·실제 작업·VM 필요). |
+
 ## 남은 확인
 
 - 2,000건이 넘는 계정에서의 단일 응답 크기와 서버의 보편적 상한. 현재 계정으로 확인한 범위를 넘는 수치는 단정하지 않는다.
