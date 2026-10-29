@@ -16,10 +16,10 @@
 
 번들의 GarminDB 3.9.0·garminconnect 0.3.11 소스로 확인했다. 실행 검증이 아니므로 작업 15에서 실제로 확인한다.
 
-- `garmindb_cli.py`는 로그인 실패 시 `sys.exit()`로 **종료 코드 0**을 낸다. 활동 목록·상세·FIT 오류도 로그만 남긴다. → 0이 아닌 종료 코드는 즉시 실패로, 0이어도 아래 로그인 표식과 SQLite ID 대조를 모두 통과해야 완료로 본다.
-- `Download.login()`은 로그인에 성공할 때마다 프로필 폴더(`gc_config.get_fit_files_dir()`)의 `user-settings.json`을 덮어쓴다. → CLI 실행 전후로 이 파일의 수정 시각이 바뀌지 않았으면 0으로 끝난 로그인 실패로 본다.
+- `garmindb_cli.py`는 로그인 실패 시 `sys.exit()`로 **종료 코드 0**을 낸다. 활동 목록·상세·FIT 오류도 로그만 남긴다. → 0이 아닌 종료 코드는 즉시 실패로, 0이어도 아래 로그 판정과 SQLite ID 대조를 모두 통과해야 완료로 본다.
+- `Download.login()`은 `GarminConnectAuthError`만 잡아 `login failed: …`를 남기고 False를 돌려주며, CLI는 `Failed to login!`을 남긴 뒤 `sys.exit()`한다(다른 예외는 0이 아닌 종료). → `garmindb.log`에 `Failed to login`이 있으면 0으로 끝난 로그인 실패로 본다(이전 PS1·sh 런처와 같은 판정).
 - 로그인 뒤의 목록·요약 조회 실패도 종료 코드 0이다(`__get_activity_summaries`는 `GarminConnectAuthError`를 로그만 남기고 빈 목록으로 끝난다). `Download.get_activities()`는 SQLite가 아니라 `activity_<id>.json`이 있는지로 다시 받을지 정한다(`--overwrite` 없을 때). → 원격 ID마다 **SQLite 행과 요약 JSON이 모두 있어야** 수집된 것으로 본다. 그러면 목록 조회가 실패한 실행이 통과하는 경우는 정상 실행도 아무것도 다시 받지 않는 경우뿐이다. JSON만 없으면(원본 정리·DB만 이전) 전체 수집으로 보충하고, 그래도 없으면 `incomplete`. 상세 JSON·FIT는 정상 실행에서도 요약 JSON이 있으면 다시 받지 않으므로 선택 항목으로 둔다. 이 JSON 조건은 원격 ID의 완료 판정에만 쓰고, 여분 경고·빈 DB·완료 건수는 `sync_supa.py`가 올리는 SQLite 전체 행으로 센다.
-- JSON import 실패(파싱 오류·DB 반영 예외 모두)는 `idbutils.JsonFileProcessor._process_files`가 `Failed to parse <파일>`로 cwd의 `garmindb.log`에만 남기고 계속한다. → `run_garmindb`가 이 로그에서 요약 파일(`activity_<id>.json`) 실패를 찾아 그 파일을 지운다. 그러면 위 완료 판정에서 누락돼 다시 받고, 계속 실패하면 `incomplete`. `--latest` import는 하루 안에 바뀐 파일만 읽으므로, 그보다 오래된 손상 파일은 이번 실행에서 import되지 않는다(정상 최근 수집도 같은 결과).
+- JSON import 실패는 cwd의 `garmindb.log`에만 남고 처리는 계속된다. 파싱 오류·커밋 실패는 `idbutils.JsonFileProcessor._process_files`의 `Failed to parse <파일>`, 종목별 보조 함수 안의 오류는 `_call_process_func`의 `Exception in _process_<종목> from <id> GarminJsonSummaryData: …`다. 보조 함수의 autoflush가 `activities` 쓰기에 실패하면(예: `database is locked`) 뒤쪽만 남고 행은 반영되지 않는다(실제 번들로 재현). 같은 형식의 DB 무관 오류(러닝 다이내믹스 없는 달리기의 `'NoneType' … meters_or_feet`)는 정상 import에서도 나온다(실제 번들로 확인). → `run_garmindb`가 `Failed to parse …/activity_<id>.json`과 `(sqlite3.` 오류가 든 보조 함수 기록만 요약 실패로 보고, 그 요약 파일을 지운다. 그러면 위 완료 판정에서 누락돼 다시 받고, 계속 실패하면 `incomplete`. `--latest` import는 하루 안에 바뀐 파일만 읽으므로, 그보다 오래된 손상 파일은 이번 실행에서 import되지 않는다(정상 최근 수집도 같은 결과).
 - `GarminConnectAuthAdapter(gc_config, garmin_factory=None, mfa_prompt=None)`는 토큰 파일(`gc_config.get_token_store_file()` = `~/.GarminDb/garmin_tokens.json`)로 먼저 로그인하고, 실패하면 자격증명으로 폴백하며, garminconnect 예외를 `GarminConnectAuthError`로 감싼다. 어댑터는 `gc_config`의 `get_user/get_password/get_token_store_file/get_garmin_base_domain`만 쓴다.
 - garminconnect 0.3.11 `Garmin.login(path)`는 path가 없으면 자격증명 로그인 후 그 path에 토큰을 쓰고(실패는 무시), API가 캐시 토큰을 거부하면 자격증명으로 다시 로그인한다.
 - 다운로드 개수는 설정의 `data.download_latest_activities`(`--latest`)와 `data.download_all_activities`(없으면)로 정해진다. 활동 목록 URL은 `Download.garmin_connect_activity_search_url`.
@@ -135,7 +135,7 @@ obj/
 실행: `powershell -ExecutionPolicy Bypass -File build\build-runtime.ps1` 후 `& build\out\runtime\python\python.exe -I -c "import garmindb, garminconnect, psycopg; print('ok')"`
 기대: `ok`. 빈 `tests/__init__.py`를 만든 뒤 기존 테스트도 이 Python으로 통과: `& $PY -I -X utf8 -m unittest discover -s tests -t . -v` → `OK` (`__init__.py`가 없으면 `Start directory is not importable`).
 
-- [ ] **5단계: 커밋** — `git add build .gitignore` · `chore: Windows 배포 런타임 빌드 스크립트와 의존성 잠금`
+- [ ] **5단계: 커밋** — `git add build .gitignore tests/__init__.py` · `chore: Windows 배포 런타임 빌드 스크립트와 의존성 잠금`
 
 ---
 
@@ -193,6 +193,20 @@ class StartSignalTests(unittest.TestCase):
     def test_without_flag_does_not_wait_for_start(self):
         done, _ = self.start(["sync"], None)
         self.assertEqual(done.returncode, run_batch.EXIT_FAIL)
+
+
+class StartupFailureTests(unittest.TestCase):
+    def test_unreadable_env_still_reports_failure_and_status(self):
+        """초기화 실패도 failed 이벤트와 status.json을 남겨, 예약 실행 실패가 이전 성공으로 보이지 않게 한다."""
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()) as out:
+            env = Path(tmp) / ".garmin-box.env"
+            env.write_bytes("SUPA_DSN=한글".encode("cp949"))   # 예전 PS 5.1이 ANSI로 저장한 파일
+            with mock.patch.object(run_batch, "ENV_FILE", env), mock.patch.dict(os.environ, {"LOCALAPPDATA": tmp}):
+                code = run_batch.main(["sync"])
+            status = json.loads((Path(tmp) / "garmin-box" / "status.json").read_text(encoding="utf-8"))
+        self.assertEqual(code, run_batch.EXIT_FAIL)
+        self.assertEqual(status["result"], "failed")
+        self.assertIn('"failed"', out.getvalue())
 
 
 class EnvAndRedactionTests(unittest.TestCase):
@@ -352,6 +366,7 @@ def require_config_complete(state_dir):
 def write_status(state_dir, mode, result, message, **extra):
     status = {"finished_at": datetime.now().astimezone().isoformat(timespec="seconds"), "mode": mode,
               "result": result, "message": message, "warnings": WARNINGS, **extra}
+    state_dir.mkdir(parents=True, exist_ok=True)  # Log를 만들기 전에 실패한 경우에도 상태를 쓴다
     path = state_dir / "status.json"
     temp = path.with_name("status.json.tmp")
     temp.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -371,11 +386,12 @@ def main(argv=None):
 
     global REDACT
     state_dir = Path(os.environ["LOCALAPPDATA"]) / "garmin-box"
-    values = {**read_env_file(ENV_FILE), **{k: os.environ[k] for k in ENV_KEYS if os.environ.get(k)}}
-    REDACT = make_redactor(secrets_of(values))
-    log = Log(state_dir / "logs", REDACT)
-    log(f"start {args.mode}")
+    log = lambda line: None  # .env 읽기·로그 폴더 준비가 실패해도 아래에서 failed 이벤트와 상태를 남긴다
     try:
+        values = {**read_env_file(ENV_FILE), **{k: os.environ[k] for k in ENV_KEYS if os.environ.get(k)}}
+        REDACT = make_redactor(secrets_of(values))
+        log = Log(state_dir / "logs", REDACT)
+        log(f"start {args.mode}")
         if args.mode == "check":
             return check(values)
         require_config_complete(state_dir)
@@ -509,9 +525,26 @@ class WrongPassword(FakeGarmin):
         raise GarminConnectAuthenticationError("401")
 
 
+class ConnectionWrappingGarmin(FakeGarmin):
+    """garminconnect 0.3.11 Garmin.login처럼 MFA 콜백의 예외를 GarminConnectConnectionError로 감싼다."""
+
+    def login(self, tokenstore=None):
+        from garminconnect import GarminConnectConnectionError
+        try:
+            self.code = self.prompt_mfa()
+        except Exception as error:
+            raise GarminConnectConnectionError(f"Login failed: {error}") from error
+
+
 class GarminLoginTests(unittest.TestCase):
     def config(self, tmp):
         return run_batch.EnteredLogin("me@example.com", "pw", Path(tmp) / "tokens.json")
+
+    def test_empty_mfa_code_is_auth_not_network(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sys, "stdin", io.StringIO("\n")), \
+                redirect_stdout(io.StringIO()), self.assertRaises(Failure) as caught:
+            run_batch.garmin_login(self.config(tmp), True, ConnectionWrappingGarmin)
+        self.assertEqual(caught.exception.kind, "auth")   # '인터넷 연결 확인'이 아니라 '인증 코드 미입력'
 
     def test_scheduled_mfa_is_reauth_even_when_wrapped(self):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(Failure) as caught:
@@ -610,14 +643,17 @@ def garmin_failure(error):
     kinds = ((GarminConnectTooManyRequestsError, "rate_limit", "Garmin 요청 제한(429)입니다. 한두 시간 뒤 다시 시도하세요."),
              (GarminConnectAuthenticationError, "auth", "Garmin 로그인에 실패했습니다. 이메일·비밀번호를 확인하세요."),
              (GarminConnectConnectionError, "network", "Garmin에 연결하지 못했습니다. 인터넷 연결을 확인하세요."))
-    seen = error
+    chain, seen = [], error
     while seen is not None:
-        if isinstance(seen, Failure):
-            return seen
+        chain.append(seen)
+        seen = seen.__cause__ or seen.__context__
+    # MFA 콜백이 던진 Failure가 우선이다: garminconnect 0.3.11은 콜백 예외를 GarminConnectConnectionError로 감싼다
+    if failure := next((e for e in chain if isinstance(e, Failure)), None):
+        return failure
+    for seen in chain:
         for cls, kind, message in kinds:
             if isinstance(seen, cls):
                 return Failure(kind, message)
-        seen = seen.__cause__ or seen.__context__
     return Failure("garmin", f"Garmin 오류: {type(error).__name__}: {error}")
 
 
@@ -730,34 +766,46 @@ class CollectTests(unittest.TestCase):
 class GarminDbRunTests(unittest.TestCase):
     """이전 동기화로 SQLite ID가 이미 완전해도 이번 CLI 실패는 업로드 전에 막는다."""
 
-    def run_cli(self, tmp, code, logged_in):
-        marker = Path(tmp) / "user-settings.json"
-        marker.write_text("{}", encoding="utf-8")
-        os.utime(marker, (0, 0))  # 이전 실행이 남긴 로그인 표식
-
+    def run_cli(self, tmp, code, log_text=""):
         def run(args, env, log, timeout, on_line=None, cwd=None):
-            if logged_in:
-                marker.write_text("{}", encoding="utf-8")  # Download.login() 성공
+            Path(cwd, "garmindb.log").write_text(log_text, encoding="utf-8")
             return code
-        return lambda latest: run_batch.run_garmindb(["garmindb_cli.py"], {}, print, 60, marker, Path(tmp), run)
+        return lambda latest: run_batch.run_garmindb(["garmindb_cli.py"], {}, print, 60, Path(tmp), run)
 
     def test_failed_cli_blocks_even_when_ids_are_complete(self):
-        for code, logged_in in ((42, True), (0, False)):  # 비정상 종료 / 0으로 끝난 로그인 실패
-            with self.subTest(code=code, logged_in=logged_in), tempfile.TemporaryDirectory() as tmp, \
+        # 비정상 종료 / Download.login()이 GarminConnectAuthError를 삼킨 뒤 sys.exit()한 0 종료
+        for code, log_text in ((42, ""), (0, "ERROR:root:login failed: 401\nERROR:garmindb_cli.py:Failed to login!\n")):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as tmp, \
                     redirect_stdout(io.StringIO()), self.assertRaises(Failure):
-                run_batch.collect({"1"}, False, self.run_cli(tmp, code, logged_in), lambda: {"1"})
+                run_batch.collect({"1"}, False, self.run_cli(tmp, code, log_text), lambda: {"1"})
 
     def test_logged_in_cli_with_complete_ids_passes(self):
         with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
-            local = run_batch.collect({"1"}, False, self.run_cli(tmp, 0, True), lambda: {"1"})
+            local = run_batch.collect({"1"}, False, self.run_cli(tmp, 0, "INFO:root:Getting activities\n"), lambda: {"1"})
         self.assertEqual(local, {"1"})
+
+    def test_failed_summaries_reads_real_garmindb_log_records(self):
+        """GarminDB 3.9.0 실제 로그 형식. 보조 함수의 DB 무관 오류(러닝 다이내믹스 없는 달리기)는 정상 import에서도 나온다."""
+        log = (
+            "ERROR:root:Exception in _process_running from 3 GarminJsonSummaryData: "
+            "'NoneType' object has no attribute 'meters_or_feet'\n"
+            "INFO:root:DB updated with 1 entries from C:\\x\\Activities/activity_3.json\n"
+            "ERROR:root:Exception in _process_running from 1 GarminJsonSummaryData: (raised as a result of Query-invoked "
+            "autoflush; consider using a session.no_autoflush block if this flush is occurring prematurely)\n"
+            "(sqlite3.OperationalError) database is locked\n"
+            "(Background on this error at: https://sqlalche.me/e/20/e3q8)\n"
+            "ERROR:root:Failed to parse C:\\x\\Activities/activity_2.json: Traceback (most recent call last):\n"
+            "json.decoder.JSONDecodeError: Expecting property name enclosed in double quotes\n"
+            "ERROR:root:Failed to parse C:\\x\\Activities/activity_details_4.json: Traceback (most recent call last):\n"
+        )
+        self.assertEqual(run_batch.failed_summaries(log), {"1", "2"})
 
     def test_summary_import_failure_is_redownloaded_or_blocks(self):
         """SQLite에 유효한 이전 행이 있어도 요약 import가 실패하면 그 요약을 다시 받고, 계속 실패하면 업로드 전에 멈춘다."""
         for fixed_on_full_run in (True, False):
             with self.subTest(fixed_on_full_run=fixed_on_full_run), tempfile.TemporaryDirectory() as tmp, \
                     redirect_stdout(io.StringIO()):
-                activities, marker = Path(tmp), Path(tmp) / "user-settings.json"
+                activities = Path(tmp)
                 summary = activities / "activity_1.json"
                 summary.write_text("{", encoding="utf-8")                     # 강제 종료로 잘린 요약
                 (activities / "activity_details_1.json").write_text("{", encoding="utf-8")
@@ -765,9 +813,7 @@ class GarminDbRunTests(unittest.TestCase):
 
                 def run(args, env, log, timeout, on_line=None, cwd=None):
                     calls.append("--latest" in args)
-                    marker.write_text("{}", encoding="utf-8")
-                    redownloaded = not summary.exists()
-                    if redownloaded:                                          # Download: 파일이 없을 때만 다시 받는다
+                    if not summary.exists():                                  # Download: 파일이 없을 때만 다시 받는다
                         summary.write_text("{}" if fixed_on_full_run else "{", encoding="utf-8")
                     if summary.read_text(encoding="utf-8") == "{":           # JsonFileProcessor: 로그만 남기고 계속
                         Path(cwd, "garmindb.log").write_text(
@@ -776,8 +822,7 @@ class GarminDbRunTests(unittest.TestCase):
                     return 0
 
                 def run_cli(latest):
-                    run_batch.run_garmindb(["garmindb_cli.py", *(["--latest"] if latest else [])], {}, print, 60,
-                                           marker, activities, run)
+                    run_batch.run_garmindb(["garmindb_cli.py", *(["--latest"] if latest else [])], {}, print, 60, activities, run)
 
                 read_local = lambda: {"1"}                                    # 이전 실행의 유효한 행
                 with_summary = lambda ids: run_batch.with_summary(ids, activities)
@@ -848,7 +893,7 @@ class LocalIdsTests(unittest.TestCase):
 
     def collect(self, remote):
         with redirect_stdout(io.StringIO()):
-            # 목록 조회가 실패해 CLI가 아무것도 받지 않았다 (종료 코드 0, 로그인 표식은 갱신)
+            # 목록 조회가 실패해 CLI가 아무것도 받지 않았다 (종료 코드 0, 로그인은 성공)
             return run_batch.collect(remote, False, lambda latest: None, lambda: run_batch.local_ids(self.db),
                                      lambda ids: run_batch.with_summary(ids, self.activities))
 
@@ -997,32 +1042,41 @@ def collect(remote, full_first, run_cli, read_local, collected=lambda ids: ids):
     return local
 
 
-SUMMARY_IMPORT_FAILED = re.compile(r"Failed to parse .*?[\\/]activity_(\d+)\.json:")
+LOG_RECORD = re.compile(r"^(?=(?:CRITICAL|ERROR|WARNING|INFO|DEBUG):)", re.M)   # basicConfig 기본 형식 LEVEL:name:message
+SUMMARY_FAILED = (
+    re.compile(r"Failed to parse .*?[\\/]activity_(\d+)\.json:"),   # 파싱 오류·커밋 실패 (_process_files)
+    # 보조 함수(_process_running 등) 안의 autoflush가 activities 쓰기에 실패한 경우. 같은 형식의 DB 무관 오류
+    # ('NoneType' … meters_or_feet: 러닝 다이내믹스 없는 달리기)는 정상 import에서도 나오므로 sqlite 오류만 본다.
+    re.compile(r"Exception in _process_\w+ from (\d+) GarminJsonSummaryData:[\s\S]*\(sqlite3\."),
+)
 
 
-def run_garmindb(args, env, log, timeout, login_marker, activities_dir, run=run_child, on_line=None):
-    """garmindb_cli를 한 번 실행한다. 0이 아닌 종료는 실패이고, 0이어도 이번 실행에서 로그인 표식이 갱신되지 않았으면 실패다.
+def failed_summaries(text):
+    """garmindb.log에서 요약(activity_<id>.json) import가 실패한 활동 ID. 상세 JSON·FIT 실패는 선택 항목이라 뺀다."""
+    return {m.group(1) for record in LOG_RECORD.split(text) for pattern in SUMMARY_FAILED if (m := pattern.search(record))}
 
-    GarminDB 3.9.0은 로그인 실패를 sys.exit()(종료 코드 0)로 끝내고, 성공할 때마다 user-settings.json을 덮어쓴다.
-    시작 시각과 비교하지 않는다: NTFS 수정 시각은 time.time()보다 거칠어(약 15ms) 방금 쓴 파일이 더 이르게 보일 수 있다.
 
-    JSON import 실패(파싱·DB 반영 예외 모두)는 JsonFileProcessor가 cwd의 garmindb.log에 "Failed to parse <파일>"로만
-    남긴다. 요약 파일이 실패했으면 그 파일을 지워 collect가 누락으로 보고 다시 받게 한다(잘린 파일은 있다고 건너뛰어
-    재시도로도 복구되지 않는다). 다시 받아도 실패하면 incomplete로 업로드 전에 멈춘다. 상세 JSON·FIT 실패는 선택 항목이다.
-    원문 로그는 메모리에서만 읽고 남기지 않는다.
+def run_garmindb(args, env, log, timeout, activities_dir, run=run_child, on_line=None):
+    """garmindb_cli를 한 번 실행한다. 0이 아닌 종료와 0으로 끝난 로그인 실패는 실패다.
+
+    GarminDB 3.9.0은 Download.login()이 GarminConnectAuthError를 삼키면 "Failed to login!"을 남기고 sys.exit()(종료 코드 0)
+    한다. 다른 로그인 예외는 traceback과 함께 0이 아닌 종료다. 이전 런처도 같은 문구로 판정했다.
+
+    요약 JSON import 실패는 cwd의 garmindb.log에만 남는다(failed_summaries). 그 요약 파일을 지워 collect가 누락으로 보고
+    다시 받게 한다(잘린 파일은 있다고 건너뛰어 재시도로도 복구되지 않는다). 다시 받아도 실패하면 incomplete로 업로드 전에
+    멈춘다. 원문 로그는 메모리에서만 읽고 남기지 않는다.
     """
-    before = login_marker.stat().st_mtime_ns if login_marker.is_file() else None
     with tempfile.TemporaryDirectory(prefix="garmin-box-", ignore_cleanup_errors=True) as cwd:
         code = run(args, env, log, timeout, on_line, cwd=cwd)
         garmindb_log = Path(cwd) / "garmindb.log"
         text = garmindb_log.read_text(encoding="utf-8", errors="replace") if garmindb_log.is_file() else ""
-    if failed := set(SUMMARY_IMPORT_FAILED.findall(text)):
+    if failed := failed_summaries(text):
         for activity_id in failed:
             (activities_dir / f"activity_{activity_id}.json").unlink(missing_ok=True)
         emit("progress", stage="import", message=f"가져오지 못한 활동 요약 {len(failed)}건은 다시 받습니다.")
     if code != 0:
         raise Failure("garmin", f"GarminDB 수집이 실패했습니다(종료 코드 {code}). 로그를 확인하세요.")
-    if not login_marker.is_file() or login_marker.stat().st_mtime_ns == before:
+    if "Failed to login" in text:
         raise Failure("garmin", "GarminDB가 Garmin에 로그인하지 못해 수집하지 않았습니다. 잠시 뒤 다시 동기화하세요.")
 
 
@@ -1065,7 +1119,6 @@ def sync(mode, values, prompt_allowed, log, factory=None):
     # Windows 전체 동기화의 DB 경로는 Garmin 설정에서 계산한 값이 우선한다 (.env에 중복 저장하지 않는다)
     env = child_env(values, GARMIN_SQLITE=str(db_path))
     cli = Path(sys.executable).parent / "Scripts" / "garmindb_cli.py"
-    login_marker = Path(config.get_fit_files_dir()) / "user-settings.json"
     activities_dir = Path(config.get_activities_dir())
 
     def run_cli(latest):
@@ -1073,7 +1126,7 @@ def sync(mode, values, prompt_allowed, log, factory=None):
         if not latest:
             ensure_download_all(GARMIN_CONFIG, max(LIST_LIMIT_FLOOR, total))
         run_garmindb([cli, "--activities", "--download", "--import", "--analyze", *(["--latest"] if latest else [])],
-                     env, log, CLI_TIMEOUT[stage], login_marker, activities_dir,
+                     env, log, CLI_TIMEOUT[stage], activities_dir,
                      on_line=lambda line: emit("progress", stage=stage, message=line))
 
     local = collect(remote, mode == "setup", run_cli, lambda: local_ids(db_path), lambda ids: with_summary(ids, activities_dir))
@@ -1105,7 +1158,7 @@ def sync(mode, values, prompt_allowed, log, factory=None):
             cur.executemany(UPSERT_SQL, rows)
 ```
 
-- [ ] **5단계: `update_gist.py` 수정** — `psycopg.connect(dsn, connect_timeout=30)`, `urllib.request.urlopen(req, timeout=30)`
+- [ ] **5단계: `update_gist.py` 수정** — `psycopg.connect(dsn, connect_timeout=30)`, `urllib.request.urlopen(req, timeout=30)`, `filename = os.environ.get("GIST_FILENAME") or "garmin-stats"` (설정 창에서 파일 이름을 비우면 `.env`에 `GIST_FILENAME=`이 저장되고, `get(..., 기본값)`은 빈 문자열을 돌려줘 `{"files": {"": …}}` PATCH가 422로 실패한다. 이전 PS 5.1 런처는 빈 값이면 환경 변수가 지워져 기본값이 쓰였다). `test_update_gist.py`에 빈 값이면 `garmin-stats`를 쓰는 테스트를 추가한다.
 
 - [ ] **6단계: 통과 확인** — `& $PY -I -X utf8 -m unittest discover -s tests -t . -v` → `OK`
 - [ ] **7단계: 커밋** — `feat: SQLite ID 대조와 보충 수집 후에만 업로드`
@@ -1442,6 +1495,19 @@ public class AppLockTests
     }
 
     [Fact]
+    public void SameThreadCannotAcquireTwiceUntilReleased()
+    {
+        string name = Name();
+        using (var first = AppLock.TryAcquire(name))
+        {
+            Assert.NotNull(first);
+            Assert.Null(AppLock.TryAcquire(name));   // mutex만으로는 같은 스레드 재진입이 성공한다
+        }
+        using var again = AppLock.TryAcquire(name);
+        Assert.NotNull(again);
+    }
+
+    [Fact]
     public void AbandonedLockIsOwnedReportedAndReleased()
     {
         string name = Name();
@@ -1520,22 +1586,28 @@ namespace GarminBox;
 /// 파일 배치·설정 저장·지금 동기화·예약 실행·수동 런처를 직렬화하는 하나뿐인 잠금. 획득한 스레드에서 Dispose한다.
 sealed class AppLock : IDisposable
 {
+    // Win32 mutex는 소유 스레드가 다시 기다리면 재진입으로 성공한다. UI 스레드의 두 번째 작업(중첩 메시지 루프,
+    // SetBusy에서 빠진 버튼)을 막으려고 이 스레드가 잡은 이름을 따로 기억한다. 다른 스레드·프로세스는 mutex가 막는다.
+    [ThreadStatic] static HashSet<string>? mine;
     readonly Mutex mutex;
+    readonly string name;
     public bool WasAbandoned { get; }
 
-    AppLock(Mutex mutex, bool abandoned) { this.mutex = mutex; WasAbandoned = abandoned; }
+    AppLock(Mutex mutex, string name, bool abandoned) { this.mutex = mutex; this.name = name; WasAbandoned = abandoned; mine!.Add(name); }
 
     public static AppLock? TryAcquire(string name = @"Local\garmin-box")
     {
+        mine ??= [];
+        if (mine.Contains(name)) return null;
         var mutex = new Mutex(false, name);
         try
         {
-            if (mutex.WaitOne(0)) return new AppLock(mutex, false);
+            if (mutex.WaitOne(0)) return new AppLock(mutex, name, false);
         }
         catch (AbandonedMutexException)
         {
             // 소유권은 얻었다. 이전 실행이 성공했다는 뜻은 아니며, 모든 작업이 설정 완료 표식·런타임 표식을 매번 다시 확인한다.
-            return new AppLock(mutex, true);
+            return new AppLock(mutex, name, true);
         }
         mutex.Dispose();
         return null;
@@ -1545,6 +1617,7 @@ sealed class AppLock : IDisposable
     {
         mutex.ReleaseMutex();
         mutex.Dispose();
+        mine!.Remove(name);
     }
 }
 ```
@@ -1705,7 +1778,9 @@ public class ConfigFilesTests
             ConfigFiles.SaveAll(new AppSettings(), """{"credentials":{"user":"b@x.com"}}""", "SUPA_DSN=x\n", db));
         Assert.Equal("A", File.ReadAllText(Paths.GarminToken));   // 다음 동기화도 A로 로그인한다
         Assert.Contains("a@x.com", File.ReadAllText(Paths.GarminConfig));
+        Assert.False(File.Exists(Paths.CheckToken));              // 거부한 B의 확인 토큰은 남기지 않는다
         ConfigFiles.SaveAll(new AppSettings(), """{"credentials":{"user":"A@X.com"}}""", "SUPA_DSN=x\n", db);   // 같은 계정은 통과
+        Assert.Equal("A", File.ReadAllText(Paths.GarminToken));   // B 토큰이 A 운영 토큰으로 승격되지 않았다
     }
 
     [Fact]
@@ -1904,7 +1979,10 @@ static class ConfigFiles
         string? saved = File.Exists(Paths.GarminConfig) ? UserOf(File.ReadAllText(Paths.GarminConfig)) : null;
         bool sameAccount = string.Equals(saved, UserOf(garminJson), StringComparison.OrdinalIgnoreCase);
         if (!sameAccount && !string.IsNullOrEmpty(saved) && File.Exists(dbPath))
+        {
+            File.Delete(Paths.CheckToken);   // 거부한 계정의 확인 토큰이 다음 같은 계정 저장에서 운영 토큰이 되지 않게
             throw new InvalidOperationException("이 PC에는 다른 Garmin 계정의 운동 DB가 있어 계정을 바꿀 수 없습니다.");
+        }
         // 계정을 바꾸면 새 이메일을 디스크에 쓰기 전에 이전 계정 토큰부터 지운다. 중간에 실패한 뒤 재시도할 때는 저장된
         // 이메일이 이미 새 계정이라 같은 계정으로 보이므로, 그때 남은 토큰을 새 계정 것으로 오인하지 않게 한다.
         // 확인 토큰이 없으면(로그인은 됐지만 토큰 저장 실패) 다음 동기화는 저장한 새 자격증명으로 로그인한다.
@@ -2539,10 +2617,13 @@ static class Scheduler
                 + string.Join(", ", legacy), null);
         dynamic? existing = null;
         try { existing = root.GetTask(TaskName); } catch (COMException) { }   // 없으면 0x80070002
-        if (existing is not null && !IsOurs((string)existing.Xml, exe))
+        // 같은 이름의 예전 수동 작업은 위 안내대로 꺼져 있으면 덮어쓴다(켜져 있으면 위에서 이미 멈췄다)
+        if (existing is not null && !IsOurs((string)existing.Xml, exe) && !IsLegacyBatch((string)existing.Xml))
             return new(false, $"같은 이름({TaskName})의 다른 예약 작업이 있어 덮어쓰지 않았습니다.", null);
         string user = WindowsIdentity.GetCurrent().Name;
-        root.RegisterTask(TaskName, BuildXml(exe, at, user, DateOnly.FromDateTime(DateTime.Today)), 6 /* CREATE_OR_UPDATE */, user, null, 3 /* INTERACTIVE_TOKEN */, null);
+        // 오늘 시각이 이미 지났으면 내일부터: 지난 시작 시각 + StartWhenAvailable이면 등록 직후 놓친 실행으로 돌 수 있다
+        var first = DateTime.Today + at.ToTimeSpan() > DateTime.Now ? DateTime.Today : DateTime.Today.AddDays(1);
+        root.RegisterTask(TaskName, BuildXml(exe, at, user, DateOnly.FromDateTime(first)), 6 /* CREATE_OR_UPDATE */, user, null, 3 /* INTERACTIVE_TOKEN */, null);
         dynamic task = root.GetTask(TaskName);
         var problems = Problems((string)task.Xml, exe, at);
         return problems.Count > 0
@@ -2552,14 +2633,22 @@ static class Scheduler
 
     static List<(string Path, bool Enabled)> LegacyTasks(dynamic folder)
     {
+        // 읽을 수 없는 작업·폴더 하나 때문에 나머지(켜진 예전 작업이 있을 수 있다)를 건너뛰지 않게 따로 잡는다
         var found = new List<(string, bool)>();
         try
         {
             foreach (dynamic task in folder.GetTasks(1 /* 숨김 포함 */))
-                if (IsLegacyBatch((string)task.Xml)) found.Add(((string)task.Path, (bool)task.Enabled));
-            foreach (dynamic sub in folder.GetFolders(0)) found.AddRange(LegacyTasks(sub));
+            {
+                try { if (IsLegacyBatch((string)task.Xml)) found.Add(((string)task.Path, (bool)task.Enabled)); }
+                catch (Exception e) when (e is COMException or UnauthorizedAccessException) { }   // 다른 사용자·시스템 작업
+            }
         }
-        catch (Exception e) when (e is COMException or UnauthorizedAccessException) { }   // 읽을 수 없는 시스템 폴더는 건너뛴다
+        catch (Exception e) when (e is COMException or UnauthorizedAccessException) { }   // 작업 목록을 못 읽는 폴더
+        try
+        {
+            foreach (dynamic sub in folder.GetFolders(0)) found.AddRange(LegacyTasks(sub));   // 하위 폴더는 재귀 안에서 따로 잡는다
+        }
+        catch (Exception e) when (e is COMException or UnauthorizedAccessException) { }
         return found;
     }
 }
@@ -2611,7 +2700,12 @@ static class Program
         int code;
         using (var held = AppLock.TryAcquire())
         {
-            if (held is null) return 1;   // 다른 작업 진행 중: 새로 시작하지 않는다
+            if (held is null)   // 다른 작업 진행 중: 새로 시작하지 않는다
+            {
+                // 수동 런처(VBS)는 창 없이 실행되므로 알리지 않으면 아무 반응이 없어 보인다
+                if (!scheduled) MessageBox.Show("다른 작업(동기화 또는 설정)이 진행 중입니다. 끝난 뒤 다시 실행하세요.", "garmin-box");
+                return 1;
+            }
             try
             {
                 var result = PythonRunner.RunAsync(Paths.Python, Paths.RunBatch, ["sync", "--no-prompt"], new Dictionary<string, string>(),
@@ -2635,7 +2729,7 @@ static class Program
 
 필수 동작:
 
-1. **시작(`OnLoad`)**: 잠금을 잡고 `Installer.Deploy()`. 잠금이 바쁘면 "동기화가 진행 중입니다"를 표시하고 배치는 건너뛴다. 실패하면 원인을 표시하고 버튼을 막는다. 그 뒤 저장된 설정을 불러오고 `status.json`의 최근 결과를 보여 준다.
+1. **시작(`OnLoad`)**: 잠금을 잡고 `Installer.Deploy()`. 잠금이 바쁘면 "동기화가 진행 중입니다"를 표시하고 `deployPending = true`로 배치를 미룬다. `RunLocked`는 잠금을 잡은 직후 미룬 배치를 먼저 실행한다(실패하면 작업을 시작하지 않고 다음 작업에서 다시 시도). 그래야 새 EXE가 이전 런타임·`run_batch.py`로 작업하지 않는다. 실패하면 원인을 표시하고 버튼을 막는다. 그 뒤 저장된 설정을 불러오고 `status.json`의 최근 결과를 보여 준다.
 2. **입력란**: Garmin 이메일, Garmin 비밀번호·Supabase 연결 문자열·GitHub 토큰(`UseSystemPasswordChar`), Gist URL/ID, 갱신할 gist 파일(편집 가능 ComboBox, 기본 `garmin-stats`), 매일 실행 시각(`HH:mm`, 기본 09:10). 시각 옆에 "로그인되어 있을 때만 실행합니다. PC가 꺼져 있었다면 로그인 후 실행합니다. Windows 비밀번호는 받지 않습니다."
 3. **저장된 비밀값**: 보여 주지 않고 `PlaceholderText = "저장됨 (바꿀 때만 입력)"`. 빈 칸이면 기존 값을 쓴다.
 4. **입력 변경**: 모든 입력란의 `TextChanged`에서 `inputVersion++`, 확인 결과를 버리고 `설정 시작`을 끈다. 확인 결과를 버릴 때(입력 변경·결과 폐기·창 닫기)는 `Paths.CheckToken`도 지운다.
@@ -2650,8 +2744,8 @@ static class Program
 핵심 코드:
 
 ```csharp
-    /// 잠금을 잡고 run_batch.py를 실행한다. 모든 작업은 잠금 획득 뒤 설정 완료·런타임 표식을 다시 확인하므로
-    /// abandoned 잠금은 경고만 남긴다.
+    /// 잠금을 잡고 run_batch.py를 실행한다. 설정 완료 표식은 run_batch.py가 매번, 런타임 표식은 Deploy가(시작 때, 또는
+    /// 미뤘으면 여기서) 확인하므로 abandoned 잠금은 경고만 남긴다.
     async Task<RunResult?> RunLocked(string mode, Dictionary<string, string> env, TimeSpan timeout, Action? prepare = null)
     {
         using var held = AppLock.TryAcquire();
@@ -2661,6 +2755,7 @@ static class Program
         running = new CancellationTokenSource();
         try
         {
+            if (deployPending) { Installer.Deploy(); deployPending = false; }   // 시작 때 잠금이 바빠 미룬 배치
             prepare?.Invoke();
             var result = await PythonRunner.RunAsync(Paths.Python, Paths.RunBatch, [mode], env, OnEvent, AskMfa, timeout, running.Token);
             if (result.TimedOut || result.Cancelled)
@@ -2727,6 +2822,8 @@ class BeginnerGuideTests(unittest.TestCase):
             self.assertIn("garmin-box\\GarminBox.exe", launcher)
             self.assertIn("--sync", launcher)
             self.assertNotIn("C:\\Users\\qoreh", launcher)
+        code = [line for line in vbs.splitlines() if not line.lstrip().startswith("'")]
+        self.assertTrue(all(line.isascii() for line in code))   # WSH는 UTF-8을 읽지 못해 한글 MsgBox가 깨진다
         self.assertNotIn("Start-Transcript", ps1)          # 정제 전 출력을 파일에 남기지 않는다
         self.assertNotIn("garmin_tokens.json", ps1)        # 토큰 삭제 재시도는 EXE 경로에서 제거
 
@@ -2760,9 +2857,11 @@ exe = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\garmin-box\GarminBox.
 If CreateObject("Scripting.FileSystemObject").FileExists(exe) Then
   shell.Run """" & exe & """ --sync", 0, False
 Else
-  MsgBox "garmin-box가 설치되지 않았습니다. 릴리스의 GarminBox.exe를 먼저 실행해 설정하세요."
+  MsgBox "garmin-box is not installed. Run GarminBox.exe from the release first.", 48, "garmin-box"
 End If
 ```
+
+WSH는 스크립트를 ANSI(또는 BOM 있는 UTF-16)로만 읽는다. BOM 없는 UTF-8의 한글 문자열은 깨지고, UTF-8 BOM은 1행 구문 오류다. 그래서 VBS의 실행 코드는 ASCII로 쓴다(주석은 무시되므로 기존 파일처럼 한글이어도 된다).
 
 - [ ] **4단계: README 재작성** — 새 PC의 EXE 실행을 앞에 둔다.
   - `## 준비물`: Garmin 계정, Supabase 연결 문자열(URI·`host=... password=...` 모두 가능, 발급 링크), gist 권한만 있는 GitHub 토큰과 gist(발급·생성 링크). Python·Git 설치 불필요.
@@ -2880,6 +2979,14 @@ Get-FileHash (Join-Path $out 'publish\GarminBox.exe') -Algorithm SHA256
 | 계정 변경 저장 시 새 이메일을 쓰기 전에 이전 계정 토큰 삭제 (3·4차 리뷰 반영) | 8 |
 | JSON 조건은 완료 판정에만, 여분·건수는 SQLite 전체 행 (4차 리뷰 반영) | 5 |
 | 요약 import 실패를 garmindb.log에서 찾아 다시 받기, 계속 실패하면 차단 (4차 리뷰 반영) | 3, 5 |
+| 보조 함수 안 DB 쓰기 실패(`(sqlite3.`)도 요약 실패로, DB 무관 보조 오류는 허용 (5차 리뷰 반영) | 5 |
+| 0 종료 로그인 실패를 `garmindb.log`의 `Failed to login`으로 판정(표식 파일·mtime 제거) (5차 리뷰 반영) | 5 |
+| MFA 코드 미입력이 네트워크 오류로 보이지 않게 Failure 우선 분류 (5차 리뷰 반영) | 4 |
+| 초기화 실패도 failed 이벤트·상태 기록 (5차 리뷰 반영) | 2 |
+| 빈 `GIST_FILENAME`은 기본 파일 (5차 리뷰 반영) | 5 |
+| 거부한 계정의 확인 토큰 삭제, 같은 스레드 잠금 재진입 차단 (5차 리뷰 반영) | 7, 8 |
+| 꺼진 같은 이름의 예전 작업 덮어쓰기, 작업 단위 탐지 오류 처리, 지난 시각이면 내일부터 (5차 리뷰 반영) | 11 |
+| 수동 런처 잠금 대기 안내, 미룬 배치를 다음 작업에서 실행, VBS 실행 코드 ASCII (5차 리뷰 반영) | 12, 13 |
 | 원격 삭제·원격 0건 여분 기록 경고 후 진행 | 5 |
 | SQL·변환 오류 시 롤백과 gist 차단 | 5 |
 | EXE 경유 작업의 mutex, abandoned 복구 | 7, 12, 15 |
