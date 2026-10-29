@@ -41,7 +41,7 @@ YEAR_SQL = """
 
 
 def fetch_stats(dsn: str) -> dict:
-    with psycopg.connect(dsn) as pg, pg.cursor() as cur:
+    with psycopg.connect(dsn, connect_timeout=30) as pg, pg.cursor() as cur:
         rows = {}
         for sport, cnt, km in cur.execute(STATS_SQL).fetchall():
             rows[sport] = (int(cnt), float(km))
@@ -78,7 +78,7 @@ def build_gist_content(stats: dict) -> str:
 
 
 def update_gist(content: str) -> None:
-    filename = os.environ.get("GIST_FILENAME", "garmin-stats")
+    filename = os.environ.get("GIST_FILENAME") or "garmin-stats"  # 설정 창에서 비우면 빈 값으로 저장된다
     body = json.dumps({"files": {filename: {"content": content}}}).encode()
     req = urllib.request.Request(
         f"https://api.github.com/gists/{os.environ['GIST_ID']}",
@@ -87,7 +87,7 @@ def update_gist(content: str) -> None:
             "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}",
             "Accept": "application/vnd.github+json",
         })
-    with urllib.request.urlopen(req) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         assert resp.status == 200, f"gist update failed: {resp.status}"
 
 

@@ -39,12 +39,15 @@ def main() -> None:
         sys.exit(f"sqlite not found: {SQLITE_PATH}")
     with sqlite3.connect(SQLITE_PATH) as lite:
         rows = lite.execute(SELECT_SQL).fetchall()
-    if not rows:
+    if not rows and os.environ.get("GARMIN_BOX_ALLOW_EMPTY") != "1":
+        # run_batch.py가 Garmin 원격 0건을 확인한 경우에만 0건 동기화를 허용한다
         sys.exit("no activity rows in sqlite")
 
-    with psycopg.connect(os.environ["SUPA_DSN"]) as pg, pg.cursor() as cur:
+    # 한 트랜잭션: SQL·변환 오류면 with 블록이 전체 upsert를 롤백하고 예외로 실패 종료한다
+    with psycopg.connect(os.environ["SUPA_DSN"], connect_timeout=30) as pg, pg.cursor() as cur:
         # ponytail: 전체 upsert 매회 실행, 건수가 수천 건 넘어가면 증분으로 전환
-        cur.executemany(UPSERT_SQL, rows)
+        if rows:
+            cur.executemany(UPSERT_SQL, rows)
         cur.execute("select count(*) from garmin_activity")
         (pg_count,) = cur.fetchone()
 
