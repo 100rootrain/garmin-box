@@ -17,7 +17,8 @@
 번들의 GarminDB 3.9.0·garminconnect 0.3.11 소스로 확인했다. 실행 검증이 아니므로 작업 15에서 실제로 확인한다.
 
 - `garmindb_cli.py`는 로그인 실패 시 `sys.exit()`로 **종료 코드 0**을 낸다. 활동 목록·상세·FIT 오류도 로그만 남긴다. → 0이 아닌 종료 코드는 즉시 실패로, 0이어도 아래 로그인 표식과 SQLite ID 대조를 모두 통과해야 완료로 본다.
-- `Download.login()`은 로그인에 성공할 때마다 프로필 폴더(`gc_config.get_fit_files_dir()`)의 `user-settings.json`을 덮어쓴다. → CLI 실행 전후로 이 파일의 수정 시각이 바뀌지 않았으면 0으로 끝난 로그인 실패로 본다. 요약·import 실패는 새 활동의 ID 누락으로 드러난다(이미 받은 활동은 다시 받지 않으므로).
+- `Download.login()`은 로그인에 성공할 때마다 프로필 폴더(`gc_config.get_fit_files_dir()`)의 `user-settings.json`을 덮어쓴다. → CLI 실행 전후로 이 파일의 수정 시각이 바뀌지 않았으면 0으로 끝난 로그인 실패로 본다.
+- 로그인 뒤의 목록·요약·import 실패(`__get_activity_summaries`는 `GarminConnectAuthError`를 로그만 남기고 빈 목록으로 끝난다)는 따로 판별하지 않는다. 새 활동이 있으면 원격 ID 대조에서 누락돼 `incomplete`로 막힌다. 새 활동이 없으면 `--overwrite` 없는 GarminDB는 이미 받은 활동을 다시 받지 않으므로, 업로드가 읽는 `activities` 테이블은 정상 실행과 같다. 업로드 대상을 `activities` 밖(상세·FIT 기반 표)으로 넓히면 이 전제를 다시 확인한다.
 - `GarminConnectAuthAdapter(gc_config, garmin_factory=None, mfa_prompt=None)`는 토큰 파일(`gc_config.get_token_store_file()` = `~/.GarminDb/garmin_tokens.json`)로 먼저 로그인하고, 실패하면 자격증명으로 폴백하며, garminconnect 예외를 `GarminConnectAuthError`로 감싼다. 어댑터는 `gc_config`의 `get_user/get_password/get_token_store_file/get_garmin_base_domain`만 쓴다.
 - garminconnect 0.3.11 `Garmin.login(path)`는 path가 없으면 자격증명 로그인 후 그 path에 토큰을 쓰고(실패는 무시), API가 캐시 토큰을 거부하면 자격증명으로 다시 로그인한다.
 - 다운로드 개수는 설정의 `data.download_latest_activities`(`--latest`)와 `data.download_all_activities`(없으면)로 정해진다. 활동 목록 URL은 `Download.garmin_connect_activity_search_url`.
@@ -998,7 +999,7 @@ class GarminCheckTokenTests(unittest.TestCase):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         config = root / "GarminConnectConfig.json"
         config.write_text(json.dumps({"credentials": {"user": "a@example.com"}}), encoding="utf-8")
-        db = root / "garmin_activities.db"
+        self.db = db = root / "garmin_activities.db"
         db.write_bytes(b"")
         self.token, self.check_token = root / "garmin_tokens.json", root / "garmin_tokens.check.json"
         self.token.write_text("A", encoding="utf-8")
@@ -1020,7 +1021,8 @@ class GarminCheckTokenTests(unittest.TestCase):
         self.assertFalse(self.check_token.exists())
 
     def test_check_leaves_production_token_until_save(self):
-        self.check("A@example.com", TokenWritingGarmin)
+        result = self.check("A@example.com", TokenWritingGarmin)
+        self.assertEqual(result["db_path"], str(self.db))   # 저장 시점 재확인용
         self.assertEqual(self.token.read_text(encoding="utf-8"), "A")
         self.assertEqual(self.check_token.read_text(encoding="utf-8"), "checked")
 
@@ -1132,7 +1134,8 @@ def check_garmin(factory=None):
             warn("Garmin 로그인 토큰을 저장하지 못했습니다. 다음 동기화에서 다시 로그인합니다.")
     else:
         adapter = garmin_login(saved_garmin_config(), True, factory)  # 같은 계정: 운영 토큰 갱신은 괜찮다
-    return {"name": adapter.full_name or adapter.display_name}
+    # db_path: EXE가 저장 직전 잠금 안에서 계정 제약을 다시 확인할 때 쓴다 (확인 뒤 수동 동기화가 DB를 만들 수 있다)
+    return {"name": adapter.full_name or adapter.display_name, "db_path": str(configured_db_path())}
 
 
 def check_item(run):
@@ -1439,6 +1442,8 @@ namespace GarminBox.Tests;
 
 public class ConfigFilesTests
 {
+    const string NoDb = @"Z:\no-such-dir\garmin_activities.db";   // 로컬 DB가 없는 PC
+
     /// 프로필 ACL이 넓은 PC를 흉내 낸다: 이 폴더에 새로 만드는 파일은 Everyone 읽기를 물려받는다.
     static void AllowEveryoneToRead(string directory)
     {
@@ -1467,8 +1472,12 @@ public class ConfigFilesTests
         string path = Path.Combine(temp.Root, ".garmin-box.env");
         File.WriteAllText(path, "SUPA_DSN=old\n");   // 넓은 권한을 물려받은 기존 파일 → 백업이 된다
         ConfigFiles.AtomicWrite(path, "SUPA_DSN=new\n");
+        // 사후 보호가 없으므로, 교체 전에 기존 대상을 보호하지 않으면 File.Replace가 넓은 DACL을 남겨 여기서 실패한다
         Assert.True(SecretAcl.IsRestricted(new FileInfo(path).GetAccessControl()));
         Assert.True(SecretAcl.IsRestricted(new FileInfo(path + ".bak").GetAccessControl()));
+        string fresh = Path.Combine(temp.Root, "new.json");
+        ConfigFiles.AtomicWrite(fresh, "{}");   // 기존 파일이 없으면 보호된 임시 파일을 그대로 옮긴다
+        Assert.True(SecretAcl.IsRestricted(new FileInfo(fresh).GetAccessControl()));
     }
 
     [Fact]
@@ -1528,7 +1537,7 @@ public class ConfigFilesTests
         Directory.CreateDirectory(Paths.GarminDbDir);
         File.WriteAllText(Paths.GarminToken, "A");
         File.WriteAllText(Paths.CheckToken, "B");
-        Assert.ThrowsAny<Exception>(() => ConfigFiles.SaveAll(new AppSettings(), "{}", "SUPA_DSN=secret\n"));
+        Assert.ThrowsAny<Exception>(() => ConfigFiles.SaveAll(new AppSettings(), "{}", "SUPA_DSN=secret\n", NoDb));
         Assert.False(ConfigFiles.LoadSettings().ConfigComplete);
         Assert.False(File.Exists(Paths.EnvFile + ".tmp"));             // 평문 비밀 임시 파일이 남지 않는다
         Assert.Equal("A", File.ReadAllText(Paths.GarminToken));        // 저장이 끝나지 않으면 운영 토큰도 그대로
@@ -1542,11 +1551,29 @@ public class ConfigFilesTests
         Directory.CreateDirectory(Paths.GarminDbDir);
         File.WriteAllText(Paths.GarminToken, "old");
         File.WriteAllText(Paths.CheckToken, "checked");
-        ConfigFiles.SaveAll(new AppSettings("07:30"), "{}", "SUPA_DSN=x\n");
+        ConfigFiles.SaveAll(new AppSettings("07:30"), "{}", "SUPA_DSN=x\n", NoDb);
         Assert.Equal(new AppSettings("07:30", true), ConfigFiles.LoadSettings());
         Assert.Contains("\"config_complete\": true", File.ReadAllText(Paths.Settings));   // run_batch.py가 읽는 이름
         Assert.Equal("checked", File.ReadAllText(Paths.GarminToken));
         Assert.False(File.Exists(Paths.CheckToken));
+    }
+
+    [Fact]
+    public void AccountChangeIsRefusedAtSaveWhenDbAppearedAfterCheck()
+    {
+        using var profile = new TempProfile();
+        Directory.CreateDirectory(Paths.InstallDir);
+        Directory.CreateDirectory(Paths.GarminDbDir);
+        File.WriteAllText(Paths.GarminConfig, """{"credentials":{"user":"a@x.com"}}""");
+        File.WriteAllText(Paths.GarminToken, "A");
+        File.WriteAllText(Paths.CheckToken, "B");                 // DB가 없을 때 B로 확인했다
+        string db = Path.Combine(profile.Dir.Root, "garmin_activities.db");
+        File.WriteAllBytes(db, []);                               // 그 사이 A 설정의 수동 동기화가 DB를 만들었다
+        Assert.Throws<InvalidOperationException>(() =>
+            ConfigFiles.SaveAll(new AppSettings(), """{"credentials":{"user":"b@x.com"}}""", "SUPA_DSN=x\n", db));
+        Assert.Equal("A", File.ReadAllText(Paths.GarminToken));   // 다음 동기화도 A로 로그인한다
+        Assert.Contains("a@x.com", File.ReadAllText(Paths.GarminConfig));
+        ConfigFiles.SaveAll(new AppSettings(), """{"credentials":{"user":"A@X.com"}}""", "SUPA_DSN=x\n", db);   // 같은 계정은 통과
     }
 }
 ```
@@ -1676,10 +1703,13 @@ static class ConfigFiles
     }
 
     /// 보호된 임시 파일에 완성한 뒤 교체하고 직전 파일을 .bak 하나로 보관한다. 실패하면 임시 파일을 지운다.
-    /// 교체 결과와 백업도 같은 보호를 확인한다.
+    /// File.Replace는 기존 대상의 DACL을 새 내용에 그대로 남기므로(실행 확인), 기존 대상·백업을 먼저 보호한다.
+    /// 그러면 교체 결과와 백업, Move한 임시 파일 모두 제한된 ACL을 가져 사후 보호가 필요 없다.
     public static void AtomicWrite(string path, string content)
     {
         string backup = path + ".bak";
+        foreach (string existing in new[] { path, backup })
+            if (File.Exists(existing)) SecretAcl.Protect(existing);   // 제한하지 못하면 예외: 새 내용을 쓰지 않는다
         string? temp = null;
         try
         {
@@ -1692,14 +1722,19 @@ static class ConfigFiles
         {
             if (temp is not null) File.Delete(temp);   // 성공했으면 이미 없다
         }
-        SecretAcl.Protect(path);
-        if (File.Exists(backup)) SecretAcl.Protect(backup);
     }
+
+    static string? UserOf(string json) => (string?)JsonNode.Parse(json)?["credentials"]?["user"];
 
     /// 잠금을 잡은 상태에서 호출한다. 두 파일 저장과 권한 확인이 모두 끝나야 설정 완료로 표시한다.
     /// 파일 간 자동 롤백은 없다: 중간에 실패하면 미완료 상태로 남아 동기화가 막히고, 사용자가 다시 저장한다.
-    public static void SaveAll(AppSettings settings, string garminJson, string envText)
+    /// dbPath는 연결 확인 결과의 garmin.db_path. 확인 뒤 수동 동기화가 DB를 처음 만들었을 수 있어 여기서 다시 막는다
+    /// (run_batch.refuse_account_change와 같은 규칙).
+    public static void SaveAll(AppSettings settings, string garminJson, string envText, string dbPath)
     {
+        string? saved = File.Exists(Paths.GarminConfig) ? UserOf(File.ReadAllText(Paths.GarminConfig)) : null;
+        if (!string.IsNullOrEmpty(saved) && !string.Equals(saved, UserOf(garminJson), StringComparison.OrdinalIgnoreCase) && File.Exists(dbPath))
+            throw new InvalidOperationException("이 PC에는 다른 Garmin 계정의 운동 DB가 있어 계정을 바꿀 수 없습니다.");
         SaveSettings(settings with { ConfigComplete = false });
         Directory.CreateDirectory(Paths.GarminDbDir);
         SecretAcl.ProtectTree(Paths.GarminDbDir);   // 기존 설정·토큰·백업의 과도한 권한도 여기서 정리
@@ -1832,7 +1867,7 @@ public class PythonRunnerTests
     {
         var events = new List<JsonElement>();
         var result = await PythonRunner.RunAsync(Python, Fixture, ["echo"], NoEnv, events.Add,
-            () => Task.FromResult<string?>("123456"), TimeSpan.FromSeconds(30), default);
+            _ => Task.FromResult<string?>("123456"), TimeSpan.FromSeconds(30), default);
         Assert.Equal(0, result.ExitCode);
         Assert.Equal("한글 진행 메시지 ✓", events[0].GetProperty("message").GetString());
         Assert.Equal("123456", events[^1].GetProperty("code").GetString());
@@ -1844,10 +1879,22 @@ public class PythonRunnerTests
         int child = 0;
         var result = await PythonRunner.RunAsync(Python, Fixture, ["hang"], NoEnv,
             e => { if (e.GetProperty("event").GetString() == "child") child = e.GetProperty("pid").GetInt32(); },
-            () => Task.FromResult<string?>(null), TimeSpan.FromSeconds(5), default);
+            _ => Task.FromResult<string?>(null), TimeSpan.FromSeconds(5), default);
         Assert.True(result.TimedOut);
         Assert.NotEqual(0, child);
         Assert.Throws<ArgumentException>(() => Process.GetProcessById(child));   // 손자도 Job과 함께 종료
+    }
+
+    [Fact]
+    public async Task TimeoutDuringMfaPromptReturnsAndCancelsPrompt()
+    {
+        CancellationToken prompt = default;
+        var run = PythonRunner.RunAsync(Python, Fixture, ["echo"], NoEnv, _ => { },
+            token => { prompt = token; return new TaskCompletionSource<string?>().Task; },   // 사용자가 입력하지 않는 대화상자
+            TimeSpan.FromSeconds(1), default);
+        Assert.Same(run, await Task.WhenAny(run, Task.Delay(TimeSpan.FromSeconds(15))));   // 입력을 기다리며 멈추지 않는다
+        Assert.True((await run).TimedOut);
+        Assert.True(prompt.IsCancellationRequested);   // 화면은 이 토큰으로 대화상자를 닫는다
     }
 }
 ```
@@ -1874,7 +1921,7 @@ static class PythonRunner
 
     /// run_batch.py를 Job에 넣어 실행한다. 콜백은 호출자 컨텍스트(GUI에서는 UI 스레드)에서 불린다 — ConfigureAwait(false)를 쓰지 않는다.
     public static async Task<RunResult> RunAsync(string python, string script, IEnumerable<string> args,
-        IReadOnlyDictionary<string, string> env, Action<JsonElement> onEvent, Func<Task<string?>> askMfa,
+        IReadOnlyDictionary<string, string> env, Action<JsonElement> onEvent, Func<CancellationToken, Task<string?>> askMfa,
         TimeSpan timeout, CancellationToken cancel)
     {
         var start = new ProcessStartInfo(python)
@@ -1914,7 +1961,11 @@ static class PythonRunner
                 catch (JsonException) { ev = JsonSerializer.SerializeToElement(new Dictionary<string, string> { ["event"] = "text", ["line"] = line }); }
                 if (ev.TryGetProperty("event", out var name) && name.GetString() == "mfa_required")
                 {
-                    string? code = await askMfa();
+                    // 시간 초과·취소면 코드 입력을 기다리지 않는다. 대화상자는 토큰으로 닫히고, Job은 이미 종료 중이라
+                    // 아래 쓰기는 IOException으로 넘어가고 EOF 뒤 WaitEmpty로 자식 종료를 확인한다.
+                    string? code;
+                    try { code = await askMfa(limit.Token).WaitAsync(limit.Token); }
+                    catch (OperationCanceledException) { code = null; }
                     try
                     {
                         await process.StandardInput.WriteLineAsync(code ?? "");
@@ -2369,6 +2420,13 @@ static class Program
             return 1;
         }
         if (args.Contains("--sync")) return Sync(scheduled);
+        // 설정 창은 하나만: 창마다 확인한 토큰이 같은 확인용 파일을 덮어쓰지 않게 한다. 작업 잠금과 달리 창이 열린 동안 잡는다.
+        using var window = AppLock.TryAcquire(@"Local\garmin-box-window");
+        if (window is null)
+        {
+            MessageBox.Show("garmin-box 설정 창이 이미 열려 있습니다.", "garmin-box");
+            return 1;
+        }
         Application.Run(new MainForm());
         return 0;
     }
@@ -2383,7 +2441,7 @@ static class Program
             try
             {
                 var result = PythonRunner.RunAsync(Paths.Python, Paths.RunBatch, ["sync", "--no-prompt"], new Dictionary<string, string>(),
-                    _ => { }, () => Task.FromResult<string?>(null), TimeSpan.FromMinutes(55), CancellationToken.None).GetAwaiter().GetResult();
+                    _ => { }, _ => Task.FromResult<string?>(null), TimeSpan.FromMinutes(55), CancellationToken.None).GetAwaiter().GetResult();
                 if (result.TimedOut) ConfigFiles.WriteFailureStatus("sync", "55분 안에 끝나지 않아 중단했습니다.");
                 code = result.ExitCode;
             }
@@ -2407,11 +2465,11 @@ static class Program
 2. **입력란**: Garmin 이메일, Garmin 비밀번호·Supabase 연결 문자열·GitHub 토큰(`UseSystemPasswordChar`), Gist URL/ID, 갱신할 gist 파일(편집 가능 ComboBox, 기본 `garmin-stats`), 매일 실행 시각(`HH:mm`, 기본 09:10). 시각 옆에 "로그인되어 있을 때만 실행합니다. PC가 꺼져 있었다면 로그인 후 실행합니다. Windows 비밀번호는 받지 않습니다."
 3. **저장된 비밀값**: 보여 주지 않고 `PlaceholderText = "저장됨 (바꿀 때만 입력)"`. 빈 칸이면 기존 값을 쓴다.
 4. **입력 변경**: 모든 입력란의 `TextChanged`에서 `inputVersion++`, 확인 결과를 버리고 `설정 시작`을 끈다. 확인 결과를 버릴 때(입력 변경·결과 폐기·창 닫기)는 `Paths.CheckToken`도 지운다.
-5. **연결 확인**: 이메일을 저장값과 다르게 바꾸면서 비밀번호가 비었으면 막는다. 실행 전 `.GarminDb`를 만들고 `SecretAcl.ProtectTree` (확인 중 받는 토큰도 보호). 입력한 값만 자식 환경으로 넘기고 `check`를 실행한다. 끝났을 때 `inputVersion`이 바뀌었으면 결과와 확인용 토큰을 버린다. 항목별 성공·실패와 원인(`message`)을 표시한다(`kind=account`: 로컬 DB가 있는 PC의 다른 계정 — `run_batch.py`가 로그인 전에 거부). GitHub 결과로 파일 목록을 채우고(없으면 `garmin-stats` 추가) "{login}의 공개/비공개 gist · 갱신할 파일: {파일}"과 gist 링크를 저장 전 보여 준다. 운영 토큰은 `SaveAll`이 설정을 저장한 뒤에만 확인용 토큰으로 바뀐다.
+5. **연결 확인**: 이메일을 저장값과 다르게 바꾸면서 비밀번호가 비었으면 막는다. 실행 전 `.GarminDb`를 만들고 `SecretAcl.ProtectTree` (확인 중 받는 토큰도 보호). 입력한 값만 자식 환경으로 넘기고 `check`를 실행한다. 끝났을 때 `inputVersion`이 바뀌었으면 결과와 확인용 토큰을 버린다. 항목별 성공·실패와 원인(`message`)을 표시한다(`kind=account`: 로컬 DB가 있는 PC의 다른 계정 — `run_batch.py`가 로그인 전에 거부). GitHub 결과로 파일 목록을 채우고(없으면 `garmin-stats` 추가) "{login}의 공개/비공개 gist · 갱신할 파일: {파일}"과 gist 링크를 저장 전 보여 준다. 운영 토큰은 `SaveAll`이 설정을 저장한 뒤에만 확인용 토큰으로 바뀐다. 확인용 토큰 파일은 하나이므로 설정 창도 하나만 연다(`Program.Main`의 `Local\garmin-box-window`). 저장할 때는 `garmin.db_path`를 `SaveAll`에 넘겨 잠금 안에서 계정 제약을 다시 확인한다.
 6. **설정 시작** 옆 설명: "설정 파일 저장 → Supabase 테이블 생성 → 운동 기록 업로드 → 선택한 gist 파일 갱신 → 매일 자동 실행 등록". 잠금 안에서 `SaveInputs` → `setup`(제한 6시간, `취소` 버튼). 실패하면 그 단계에서 멈추고 다시 시도할 수 있다(만든 테이블·업로드한 기록은 지우지 않음). 성공하면 `RegisterSchedule()`.
 7. **RegisterSchedule**: 성공이면 "설정 완료 · 첫 동기화 N건 · 다음 실행 yyyy-MM-dd HH:mm (로그인되어 있을 때만)"과 gist 링크. 실패면 "동기화 성공 / 자동 실행 설정 실패: {원인}"과 `예약 다시 등록` 버튼(누르면 gist 갱신 없이 등록만 재시도).
 8. **지금 동기화**: 잠금 안에서 `sync`(제한 55분, MFA는 화면에서 입력). 끝나면 최근 결과 갱신.
-9. **MFA**: `mfa_required` 이벤트에서 코드 입력 대화상자를 띄우고 한 줄을 돌려준다. 취소하면 빈 줄.
+9. **MFA**: `mfa_required` 이벤트에서 코드 입력 대화상자를 띄우고 한 줄을 돌려준다. 취소하면 빈 줄. `AskMfa(CancellationToken)`는 토큰이 취소되면(시간 초과·`취소` 버튼) 대화상자를 닫고 `null`을 돌려준다(`token.Register`로 UI 스레드에서 `Close`).
 10. **진행 표시**: `progress`·`warning`·`failed` 이벤트를 진행 상자와 상태 표시에 쓴다. 상태가 `reauth`면 "Garmin 재인증 필요: 비밀번호 칸을 비운 채 연결 확인을 눌러 다시 로그인하세요."
 11. **잠금 규칙**: 잠금은 UI 스레드에서 잡고 `await` 뒤 같은 UI 스레드에서 해제한다(WinForms 컨텍스트로 복귀). 핸들러에서 `ConfigureAwait(false)`를 쓰지 않는다. 대화상자 대신 상태 표시를 써서 잠금을 잡은 채 사용자를 기다리지 않는다(MFA 입력만 예외).
 
@@ -2453,7 +2511,8 @@ static class Program
         if (token.Text.Trim().Length > 0) env["GITHUB_TOKEN"] = token.Text.Trim();
         env["GIST_ID"] = check.GetProperty("github").GetProperty("gist_id").GetString()!;
         env["GIST_FILENAME"] = gistFile.Text.Trim();
-        ConfigFiles.SaveAll(ConfigFiles.LoadSettings() with { ScheduleTime = runAt.Value.ToString("HH:mm") }, garmin, ConfigFiles.FormatEnv(env));
+        ConfigFiles.SaveAll(ConfigFiles.LoadSettings() with { ScheduleTime = runAt.Value.ToString("HH:mm") }, garmin, ConfigFiles.FormatEnv(env),
+            check.GetProperty("garmin").GetProperty("db_path").GetString()!);
     }
 ```
 
@@ -2614,7 +2673,7 @@ Get-FileHash (Join-Path $out 'publish\GarminBox.exe') -Algorithm SHA256
 - [ ] **4단계: 토큰 폴백**: `garmin_tokens.json`을 깨진 내용으로 바꾼 뒤 `--sync` → 자격증명 폴백으로 성공하는지. 성공하면 Windows 경로의 토큰 삭제 재시도 제거가 맞다는 근거로 기록한다.
 - [ ] **5단계: 예약 실행**: 작업 스케줄러에서 `garmin-box`를 즉시 실행 → 콘솔 창 없음, `status.json` 갱신. 정의의 배터리·`PT1H`·`StartWhenAvailable`·`IgnoreNew`·`InteractiveToken`을 다시 확인.
 - [ ] **6단계: 강제 종료**: 지금 동기화 중 작업 관리자로 `GarminBox.exe` 종료 → `python.exe`(CLI 손자 포함)가 모두 사라지는지. 다시 열었을 때 abandoned 경고 후 정상 진행.
-- [ ] **7단계: 중복 실행**: 지금 동기화 중 수동 런처·예약 실행 → 새 작업이 시작되지 않음.
+- [ ] **7단계: 중복 실행**: 지금 동기화 중 수동 런처·예약 실행 → 새 작업이 시작되지 않음. 설정 창이 열린 채 EXE를 다시 실행 → "설정 창이 이미 열려 있습니다" 후 종료. MFA 입력 창을 띄운 채 `취소` → 입력 창이 닫히고 바로 다음 작업을 할 수 있음.
 - [ ] **8단계: 기존 수동 작업**: 예전 README 방식의 VBS 예약 작업을 만든 상태에서 설정 시작 → 새 예약을 켜지 않고 해제 안내, 해제 후 `예약 다시 등록` 성공.
 - [ ] **9단계: 깨끗한 Windows**: Python/Git/gh/.NET이 없는 Windows 10/11 VM에서 1·3·5단계. VM이 없으면 미검증으로 기록.
 - [ ] **10단계: 기록·커밋** — 항목별 결과, 버전·EXE SHA-256, 미검증 항목을 기록 · `docs: Windows 설정 EXE 실행 검증 기록`
@@ -2639,6 +2698,10 @@ Get-FileHash (Join-Path $out 'publish\GarminBox.exe') -Algorithm SHA256
 | 기존 SQLite ID가 완전해도 CLI 비정상 종료·0 종료 로그인 실패 차단 (리뷰 반영) | 5 |
 | 다른 계정 확인 거부 시 운영 토큰 보존, 저장 시에만 확인용 토큰 교체 (리뷰 반영) | 6, 8 |
 | 비밀 임시 파일을 내용 전에 보호, 실패 시 제거, 백업 보호 (리뷰 반영) | 8 |
+| 설정 창 하나만 열기, 저장 시점 계정 제약 재확인 (2차 리뷰 반영) | 6, 8, 12, 15 |
+| `File.Replace` 전에 기존 대상·백업 보호 (2차 리뷰 반영) | 8 |
+| MFA 입력 대기 중 시간 초과·취소 시 반환 (2차 리뷰 반영) | 9, 12, 15 |
+| 로그인 뒤 목록 실패는 ID 대조로 판별 (2차 리뷰 검토, 변경 없음) | 5 |
 | 원격 삭제·원격 0건 여분 기록 경고 후 진행 | 5 |
 | SQL·변환 오류 시 롤백과 gist 차단 | 5 |
 | EXE 경유 작업의 mutex, abandoned 복구 | 7, 12, 15 |
