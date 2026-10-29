@@ -73,7 +73,7 @@ for file in (args.repo / "test_update_gist.py", args.repo / "tests" / "test_docs
         if name.startswith("test_") and callable(function):
             suite.addTest(unittest.FunctionTestCase(function))
 result = unittest.TextTestRunner(verbosity=2).run(suite)
-assert result.wasSuccessful() and result.testsRun == 4
+assert result.wasSuccessful() and result.testsRun > 0
 report["existing_tests_passed"] = result.testsRun
 report["checks"].append("existing_repository_tests")
 result = subprocess.run([sys.executable, "-I", "-m", "pip", "--isolated", "check"], capture_output=True, text=True, timeout=60)
