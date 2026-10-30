@@ -127,3 +127,13 @@ the .NET 10 SDK.
 To preview the statistics only, run `.venv/bin/python update_gist.py --dry-run`.
 
 Never commit secrets. See `.gitignore` for `.env`, logs, and token files.
+
+## License
+
+The code in this repository is released under the [MIT License](LICENSE).
+
+The Windows release `GarminBox.exe` bundles a Python runtime and its dependencies, each under its own license.
+
+- [GarminDB](https://github.com/tcgoetz/GarminDB) and its author's `fitfile`, `idbutils`, and `tcxfile` are GPL-2.0. Those parts of the EXE are distributed under GPL-2.0.
+- `psycopg` is LGPL-3.0, and `certifi` and part of `tqdm` are MPL-2.0, all unmodified. The rest are MIT, BSD, Apache-2.0, or PSF style.
+- Each package's license text and source (`.py`) remain in `%LOCALAPPDATA%\garmin-box\runtime\python\Lib\site-packages` after installation.

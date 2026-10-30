@@ -87,3 +87,13 @@ powershell -ExecutionPolicy Bypass -File build\release.ps1         # 번들 검�
 통계 내용만 확인하려면 `.venv/bin/python update_gist.py --dry-run`을 실행합니다.
 
 시크릿, 로그, 토큰 파일은 커밋하지 마세요. 영어 안내는 [README.en.md](README.en.md)를 참고하세요.
+
+## 라이선스
+
+이 저장소의 코드는 [MIT 라이선스](LICENSE)를 따릅니다.
+
+Windows 릴리스의 `GarminBox.exe`에는 Python 실행 환경과 의존 패키지가 들어 있고, 각 패키지는 자기 라이선스를 따릅니다.
+
+- [GarminDB](https://github.com/tcgoetz/GarminDB)와 같은 작성자의 `fitfile`·`idbutils`·`tcxfile`은 GPL-2.0입니다. EXE에 들어 있는 이 부분은 GPL-2.0 조건으로 배포합니다.
+- `psycopg`는 LGPL-3.0, `certifi`와 `tqdm` 일부는 MPL-2.0이며 수정하지 않았습니다. 나머지는 MIT·BSD·Apache-2.0·PSF 계열입니다.
+- 각 패키지의 라이선스 전문과 소스(`.py`)는 설치 후 `%LOCALAPPDATA%\garmin-box\runtime\python\Lib\site-packages`에 그대로 있습니다.
