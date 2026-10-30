@@ -134,6 +134,9 @@ The code in this repository is released under the [MIT License](LICENSE).
 
 The Windows release `GarminBox.exe` bundles a Python runtime and its dependencies, each under its own license.
 
-- [GarminDB](https://github.com/tcgoetz/GarminDB) and its author's `fitfile`, `idbutils`, and `tcxfile` are GPL-2.0. Those parts of the EXE are distributed under GPL-2.0.
-- `psycopg` is LGPL-3.0, and `certifi` and part of `tqdm` are MPL-2.0, all unmodified. The rest are MIT, BSD, Apache-2.0, or PSF style.
-- Each package's license text and source (`.py`) remain in `%LOCALAPPDATA%\garmin-box\runtime\python\Lib\site-packages` after installation.
+- [GarminDB](https://github.com/tcgoetz/GarminDB) and its author's `fitfile`, `idbutils`, and `tcxfile` are GPL-2.0. `run_batch.py` imports GarminDB directly in the same Python process, so the release EXE, which ships them together, is distributed as a whole under GPL-2.0. The code files in this repository remain MIT when used on their own.
+- `psycopg` and `psycopg-binary` are LGPL-3.0, and `certifi` and part of `tqdm` are MPL-2.0, all unmodified. The rest are MIT, BSD, Apache-2.0, or PSF style. Package versions are pinned in [`build/windows-requirements.lock`](build/windows-requirements.lock).
+- Where to get the source:
+  - garmin-box (including the C# executable): the tag in this repository that matches the release name (for example [`v0.1.0`](https://github.com/100rootrain/garmin-box/tree/v0.1.0)).
+  - Python packages: each package's license text and `.py` source remain in `%LOCALAPPDATA%\garmin-box\runtime\python\Lib\site-packages` after installation.
+  - Native modules of `psycopg-binary` (the `.pyd` files for `_psycopg` and `pq`): the bundle contains only the Cython-generated `.c` files. The original Cython sources (`psycopg_c/`) and the Windows wheel build scripts (`tools/ci/`, `.github/workflows/packages-bin.yml`) are in the psycopg repository at the same version tag (currently [`3.3.6`](https://github.com/psycopg/psycopg/tree/3.3.6)).

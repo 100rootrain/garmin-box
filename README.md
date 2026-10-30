@@ -94,6 +94,9 @@ powershell -ExecutionPolicy Bypass -File build\release.ps1         # 번들 검�
 
 Windows 릴리스의 `GarminBox.exe`에는 Python 실행 환경과 의존 패키지가 들어 있고, 각 패키지는 자기 라이선스를 따릅니다.
 
-- [GarminDB](https://github.com/tcgoetz/GarminDB)와 같은 작성자의 `fitfile`·`idbutils`·`tcxfile`은 GPL-2.0입니다. EXE에 들어 있는 이 부분은 GPL-2.0 조건으로 배포합니다.
-- `psycopg`는 LGPL-3.0, `certifi`와 `tqdm` 일부는 MPL-2.0이며 수정하지 않았습니다. 나머지는 MIT·BSD·Apache-2.0·PSF 계열입니다.
-- 각 패키지의 라이선스 전문과 소스(`.py`)는 설치 후 `%LOCALAPPDATA%\garmin-box\runtime\python\Lib\site-packages`에 그대로 있습니다.
+- [GarminDB](https://github.com/tcgoetz/GarminDB)와 같은 작성자의 `fitfile`·`idbutils`·`tcxfile`은 GPL-2.0입니다. `run_batch.py`는 GarminDB를 같은 Python 프로세스에서 직접 import해 쓰므로, 이들을 함께 배포하는 릴리스 EXE는 전체로서 GPL-2.0 조건을 따릅니다. 이 저장소의 코드 파일은 따로 떼어 쓰면 MIT 그대로입니다.
+- `psycopg`·`psycopg-binary`는 LGPL-3.0, `certifi`와 `tqdm` 일부는 MPL-2.0이며 수정하지 않았습니다. 나머지는 MIT·BSD·Apache-2.0·PSF 계열입니다. 패키지 버전은 [`build/windows-requirements.lock`](build/windows-requirements.lock)에 고정돼 있습니다.
+- 소스를 얻는 곳:
+  - garmin-box(C# 실행 파일 포함): 이 저장소에서 릴리스와 같은 이름의 태그(예: [`v0.1.0`](https://github.com/100rootrain/garmin-box/tree/v0.1.0)).
+  - Python 패키지: 각 패키지의 라이선스 전문과 `.py` 소스가 설치 후 `%LOCALAPPDATA%\garmin-box\runtime\python\Lib\site-packages`에 그대로 있습니다.
+  - `psycopg-binary`의 네이티브 모듈(`_psycopg`·`pq`의 `.pyd`): 번들에는 Cython이 생성한 `.c`만 있습니다. 원래 Cython 소스(`psycopg_c/`)와 Windows wheel 빌드 스크립트(`tools/ci/`, `.github/workflows/packages-bin.yml`)는 psycopg 저장소의 같은 버전 태그(현재 [`3.3.6`](https://github.com/psycopg/psycopg/tree/3.3.6))에 있습니다.
